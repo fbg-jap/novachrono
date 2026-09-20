@@ -9,6 +9,7 @@ from typer.testing import CliRunner
 
 from novachrono.cli import app
 from novachrono.config import (
+    DEFAULT_DISPLAY_ORDER,
     AppConfig,
     MailSettings,
     TeamsSettings,
@@ -212,6 +213,7 @@ def test_preview_passes_external_data_to_dashboard(
         timezone=app_config.timezone,
         locale=app_config.locale,
         temperature_unit=app_config.temperature_unit,
+        display_order=app_config.display_order,
     )
 
 
@@ -498,6 +500,43 @@ def test_send_mail_targets_mail_display(
 
     mocked_client.send_animation.assert_not_called()
     assert mocked_client.send_image.call_args.kwargs["panel_index"] == MAIL_PANEL_INDEX
+
+
+@patch("novachrono.cli.fetch_mail_summary")
+@patch("novachrono.cli.TimesGateClient")
+@patch("novachrono.cli.load_config")
+def test_send_mail_targets_configured_display_order(
+    mocked_load_config: MagicMock,
+    mocked_client_class: MagicMock,
+    mocked_fetch_mail: MagicMock,
+    mail: MailSummary,
+) -> None:
+    mocked_load_config.return_value = _create_app_config(
+        mail_host="mail.example.com",
+        mail_username="user",
+        mail_password="pw",
+        display_order=(
+            "teams",
+            "pokemon_go",
+            "clock",
+            "weather",
+            "mail",
+        ),
+    )
+    mocked_fetch_mail.return_value = mail
+
+    mocked_client = mocked_client_class.return_value
+    mocked_client.send_image.return_value = {
+        "ReturnCode": 0,
+    }
+
+    result = runner.invoke(
+        app,
+        ["send-mail"],
+    )
+
+    assert result.exit_code == 0
+    assert mocked_client.send_image.call_args.kwargs["panel_index"] == 4
 
 
 @patch("novachrono.cli.fetch_mail_summary")
@@ -903,6 +942,66 @@ def test_send_dashboard_uses_clock_animation_and_static_other_panels(
 @patch("novachrono.cli._load_current_weather")
 @patch("novachrono.cli.TimesGateClient")
 @patch("novachrono.cli.load_config")
+def test_send_dashboard_respects_custom_display_order(
+    mocked_load_config: MagicMock,
+    mocked_client_class: MagicMock,
+    mocked_load_weather: MagicMock,
+    mocked_load_raids: MagicMock,
+    mocked_fetch_artwork: MagicMock,
+    weather: CurrentWeather,
+    raid_roster: RaidRoster,
+) -> None:
+    mocked_load_config.return_value = _create_app_config(
+        display_order=(
+            "teams",
+            "pokemon_go",
+            "clock",
+            "weather",
+            "mail",
+        ),
+    )
+    mocked_load_weather.return_value = weather
+    mocked_load_raids.return_value = raid_roster
+    mocked_fetch_artwork.return_value = {}
+
+    mocked_client = mocked_client_class.return_value
+    mocked_client.config.api_url = "http://192.168.178.50:9000/divoom_api"
+
+    mocked_client.send_image.return_value = {
+        "ReturnCode": 0,
+    }
+
+    result = runner.invoke(
+        app,
+        ["send-dashboard"],
+    )
+
+    assert result.exit_code == 0
+
+    assert mocked_client.send_image.call_count == 4
+    assert mocked_client.send_animation.call_count == 1
+
+    static_panel_indices = [
+        call.kwargs["panel_index"] for call in mocked_client.send_image.call_args_list
+    ]
+
+    # display_order = (teams, pokemon_go, clock, weather, mail)
+    assert static_panel_indices == [0, 1, 3, 4]
+
+    clock_arguments = _animation_arguments_for_panel(
+        mocked_client,
+        2,
+    )
+
+    assert len(clock_arguments["images"]) == 26
+    assert clock_arguments["frame_duration_ms"] == 250
+
+
+@patch("novachrono.cli.fetch_raid_artwork")
+@patch("novachrono.cli._load_raid_roster")
+@patch("novachrono.cli._load_current_weather")
+@patch("novachrono.cli.TimesGateClient")
+@patch("novachrono.cli.load_config")
 def test_send_dashboard_uses_animation_for_pokemon_display(
     mocked_load_config: MagicMock,
     mocked_client_class: MagicMock,
@@ -1079,6 +1178,7 @@ def _create_app_config(
     teams_client_secret: str | None = None,
     teams_team_id: str | None = None,
     teams_channel_id: str | None = None,
+    display_order: tuple[str, ...] = DEFAULT_DISPLAY_ORDER,
 ) -> AppConfig:
     return AppConfig(
         timezone=ZoneInfo("Europe/Berlin"),
@@ -1106,4 +1206,5 @@ def _create_app_config(
             team_id=teams_team_id,
             channel_id=teams_channel_id,
         ),
+        display_order=display_order,
     )

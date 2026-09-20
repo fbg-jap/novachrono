@@ -301,9 +301,9 @@ The visual design intentionally accounts for the physical Times Gate display, wh
 
 ### Dashboard
 
-The dashboard renderer creates a static five-panel snapshot and assigns widgets to display positions.
+The dashboard renderer creates a static five-panel snapshot and assigns widgets to display positions according to the configured display order.
 
-Current assignments:
+Default assignments:
 
 ```text
 Panel index 0 -> mail
@@ -314,6 +314,8 @@ Panel index 4 -> teams
 ```
 
 The physical displays are therefore numbered 1 through 5, while internal panel indices range from 0 through 4.
+
+The assignment is configurable through `NOVACHRONO_DISPLAY_ORDER` (see [Display Arrangement](#display-arrangement)) and is resolved at runtime by `dashboard.panel_index_for()`, which every single-widget `send-*` command and the combined `send-dashboard` command use instead of a fixed index.
 
 Animation delivery is handled separately by the CLI and Times Gate output adapter.
 
@@ -335,6 +337,8 @@ Configuration is normalized into an immutable `AppConfig` before it is used by t
 It binds to `127.0.0.1` by default so the configuration, including the Times Gate token, is not exposed to the local network.
 
 The GUI reuses the same validation rules as `config.py` and shows inline errors instead of writing an invalid `.env` file.
+
+The GUI also renders a live-looking thumbnail of each widget and lets you drag them into a new display order. Thumbnails use fixed sample data (not your real weather, mail, or Teams data) so the page loads instantly and never makes an external network call just by being opened. Dragging updates a hidden field that is saved together with the rest of the form.
 
 ### Internationalization
 
@@ -489,6 +493,8 @@ NOVACHRONO_TEAMS_CLIENT_SECRET=
 NOVACHRONO_TEAMS_TEAM_ID=
 NOVACHRONO_TEAMS_CHANNEL_ID=
 
+NOVACHRONO_DISPLAY_ORDER=mail,weather,clock,pokemon_go,teams
+
 NOVACHRONO_TIMES_GATE_HOST=192.168.1.100
 NOVACHRONO_TIMES_GATE_TOKEN=replace-me
 ```
@@ -612,6 +618,30 @@ Setting these up requires an Azure AD app registration with the Microsoft Graph 
 
 Do not commit a real client secret.
 
+### Display Arrangement
+
+```text
+NOVACHRONO_DISPLAY_ORDER
+```
+
+A comma-separated list assigning each widget to a physical display, in order from display 1 to display 5. It must contain each of the following exactly once:
+
+```text
+mail
+weather
+clock
+pokemon_go
+teams
+```
+
+Default:
+
+```text
+mail,weather,clock,pokemon_go,teams
+```
+
+The easiest way to change this is the drag-and-drop arrangement UI in `novachrono configure`, which writes this value for you. Editing it by hand works too, as long as all five names are present exactly once.
+
 ### Times Gate Host
 
 The host must contain only the local IP address or hostname.
@@ -680,6 +710,8 @@ uv run novachrono configure
 This starts a local web server on `http://127.0.0.1:8765/` and opens it in your default browser.
 
 The form is pre-filled with the current `.env` values and writes changes back to the same file after validating them.
+
+At the top of the page, a "Display Arrangement" section shows each widget as a draggable card with a sample-data thumbnail. Drag the cards to change which physical display (1 through 5) each widget appears on, then click **Save** along with the rest of the form.
 
 Use `--port` to choose another port, and `--no-open-browser` to skip opening a browser automatically:
 
@@ -968,6 +1000,8 @@ Potential security issues should be reported according to the [Security Policy](
 - [x] add a Typer-based CLI
 - [x] add `.env`-based configuration
 - [x] add a local web GUI for editing configuration
+- [x] add configurable display arrangement
+- [x] add widget preview and drag-and-drop rearrangement to the configuration GUI
 - [x] add basic internationalization
 - [x] add configurable Celsius and Fahrenheit rendering
 
@@ -1062,7 +1096,6 @@ Future configuration may include:
 - GitHub repositories and token
 - calendar feeds
 - widget update intervals
-- display assignments
 - visual theme settings
 
 The existing environment-variable configuration should remain small and understandable.

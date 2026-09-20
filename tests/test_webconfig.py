@@ -42,6 +42,14 @@ def test_get_returns_configuration_form(
     assert "NOVACHRONO_LOCALE" in body
     assert "NOVACHRONO_TIMES_GATE_TOKEN" in body
 
+    assert "Display Arrangement" in body
+    assert 'id="display-order-field"' in body
+    assert 'value="mail,weather,clock,pokemon_go,teams"' in body
+    assert 'data-widget="mail"' in body
+    assert 'data-widget="teams"' in body
+    assert "Pokémon GO" in body
+    assert "data:image/png;base64," in body
+
 
 def test_post_valid_values_writes_env_file(
     running_server: tuple[HTTPServer, Path],
@@ -73,6 +81,7 @@ def test_post_valid_values_writes_env_file(
     assert values["NOVACHRONO_TEAMS_CLIENT_SECRET"] == "teams-secret"
     assert values["NOVACHRONO_TEAMS_TEAM_ID"] == "team-id"
     assert values["NOVACHRONO_TEAMS_CHANNEL_ID"] == "channel-id"
+    assert values["NOVACHRONO_DISPLAY_ORDER"] == "mail,weather,clock,pokemon_go,teams"
 
 
 def test_post_invalid_timezone_does_not_write_env_file(
@@ -178,6 +187,93 @@ def test_post_incomplete_teams_settings_reports_error(
     assert not env_file.exists()
 
 
+def test_post_custom_display_order_writes_env_file(
+    running_server: tuple[HTTPServer, Path],
+) -> None:
+    httpd, env_file = running_server
+
+    submission = dict(
+        _VALID_SUBMISSION,
+        NOVACHRONO_DISPLAY_ORDER="teams,mail,weather,clock,pokemon_go",
+    )
+
+    with urlopen(_server_url(httpd), data=_encode(submission)) as response:
+        body = response.read().decode("utf-8")
+
+    assert "Configuration saved." in body
+
+    values = dotenv_values(env_file)
+    assert values["NOVACHRONO_DISPLAY_ORDER"] == "teams,mail,weather,clock,pokemon_go"
+
+
+def test_get_reflects_saved_display_order(
+    running_server: tuple[HTTPServer, Path],
+) -> None:
+    httpd, _ = running_server
+
+    submission = dict(
+        _VALID_SUBMISSION,
+        NOVACHRONO_DISPLAY_ORDER="teams,mail,weather,clock,pokemon_go",
+    )
+    urlopen(_server_url(httpd), data=_encode(submission)).close()
+
+    with urlopen(_server_url(httpd)) as response:
+        body = response.read().decode("utf-8")
+
+    assert 'value="teams,mail,weather,clock,pokemon_go"' in body
+
+
+def test_post_invalid_display_order_reports_error(
+    running_server: tuple[HTTPServer, Path],
+) -> None:
+    httpd, env_file = running_server
+
+    submission = dict(
+        _VALID_SUBMISSION,
+        NOVACHRONO_DISPLAY_ORDER="mail,weather,clock",
+    )
+
+    with urlopen(_server_url(httpd), data=_encode(submission)) as response:
+        body = response.read().decode("utf-8")
+
+    assert "Display order must contain each of" in body
+    assert not env_file.exists()
+
+
+def test_post_duplicate_display_order_reports_error(
+    running_server: tuple[HTTPServer, Path],
+) -> None:
+    httpd, env_file = running_server
+
+    submission = dict(
+        _VALID_SUBMISSION,
+        NOVACHRONO_DISPLAY_ORDER="mail,mail,clock,pokemon_go,teams",
+    )
+
+    with urlopen(_server_url(httpd), data=_encode(submission)) as response:
+        body = response.read().decode("utf-8")
+
+    assert "Display order must contain each of" in body
+    assert not env_file.exists()
+
+
+def test_post_missing_display_order_field_uses_default(
+    running_server: tuple[HTTPServer, Path],
+) -> None:
+    httpd, env_file = running_server
+
+    submission = dict(_VALID_SUBMISSION)
+    del submission["NOVACHRONO_DISPLAY_ORDER"]
+
+    with urlopen(_server_url(httpd), data=_encode(submission)) as response:
+        body = response.read().decode("utf-8")
+
+    assert "Configuration saved." in body
+
+    values = dotenv_values(env_file)
+    assert values["NOVACHRONO_DISPLAY_ORDER"] == "mail,weather,clock,pokemon_go,teams"
+
+
 _VALID_SUBMISSION = {
     "NOVACHRONO_LOCALE": "en_US",
     "NOVACHRONO_TIMEZONE": "Europe/Berlin",
@@ -196,6 +292,7 @@ _VALID_SUBMISSION = {
     "NOVACHRONO_TEAMS_CLIENT_SECRET": "teams-secret",
     "NOVACHRONO_TEAMS_TEAM_ID": "team-id",
     "NOVACHRONO_TEAMS_CHANNEL_ID": "channel-id",
+    "NOVACHRONO_DISPLAY_ORDER": "mail,weather,clock,pokemon_go,teams",
 }
 
 
