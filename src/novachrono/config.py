@@ -75,19 +75,12 @@ def load_config(env_file: Path | None = None) -> AppConfig:
     values: dict[str, str | None] = {**file_values, **os.environ}
 
     timezone_name = _read_optional_value(values, TIMEZONE_VARIABLE) or DEFAULT_TIMEZONE_NAME
-
-    try:
-        timezone = ZoneInfo(timezone_name)
-    except ZoneInfoNotFoundError as error:
-        raise ConfigError(f"Unknown timezone: {timezone_name}") from error
+    timezone = validate_timezone(timezone_name)
 
     locale = _read_optional_value(values, LOCALE_VARIABLE) or DEFAULT_LOCALE
+    validate_locale(locale)
 
-    if locale not in SUPPORTED_LOCALES:
-        supported = ", ".join(SUPPORTED_LOCALES)
-        raise ConfigError(f"Unsupported locale: {locale}. Supported locales: {supported}")
-
-    temperature_unit = _parse_temperature_unit(
+    temperature_unit = parse_temperature_unit(
         _read_optional_value(values, TEMPERATURE_UNIT_VARIABLE)
     )
 
@@ -111,6 +104,19 @@ def _read_weather_settings(values: Mapping[str, str | None]) -> WeatherSettings:
     latitude = _parse_optional_float(values, WEATHER_LATITUDE_VARIABLE)
     longitude = _parse_optional_float(values, WEATHER_LONGITUDE_VARIABLE)
 
+    return validate_weather_settings(
+        latitude=latitude,
+        longitude=longitude,
+    )
+
+
+def validate_weather_settings(
+    *,
+    latitude: float | None,
+    longitude: float | None,
+) -> WeatherSettings:
+    """Validate weather coordinates and return normalized settings."""
+
     if (latitude is None) != (longitude is None):
         raise ConfigError("Weather latitude and longitude must be configured together")
 
@@ -126,7 +132,28 @@ def _read_weather_settings(values: Mapping[str, str | None]) -> WeatherSettings:
     )
 
 
-def _parse_temperature_unit(value: str | None) -> TemperatureUnit:
+def validate_timezone(name: str) -> ZoneInfo:
+    """Validate an IANA timezone name and return the resolved ``ZoneInfo``."""
+
+    try:
+        return ZoneInfo(name)
+    except ZoneInfoNotFoundError as error:
+        raise ConfigError(f"Unknown timezone: {name}") from error
+
+
+def validate_locale(locale: str) -> str:
+    """Validate a locale against the supported locales."""
+
+    if locale not in SUPPORTED_LOCALES:
+        supported = ", ".join(SUPPORTED_LOCALES)
+        raise ConfigError(f"Unsupported locale: {locale}. Supported locales: {supported}")
+
+    return locale
+
+
+def parse_temperature_unit(value: str | None) -> TemperatureUnit:
+    """Parse a configured temperature unit, defaulting to Celsius."""
+
     if value is None:
         return TemperatureUnit.CELSIUS
 

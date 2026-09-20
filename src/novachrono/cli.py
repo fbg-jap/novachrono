@@ -39,6 +39,11 @@ from novachrono.sources.scraped_duck import (
     fetch_raid_roster,
 )
 from novachrono.weather import CurrentWeather, WeatherCondition
+from novachrono.webconfig import (
+    DEFAULT_CONFIG_SERVER_HOST,
+    DEFAULT_CONFIG_SERVER_PORT,
+    run_config_server,
+)
 from novachrono.widgets.clock import render_clock_animation
 from novachrono.widgets.pokemon_go import render_raid_animation
 from novachrono.widgets.weather import render_weather_animation
@@ -72,6 +77,49 @@ TokenOption = Annotated[
         metavar="TOKEN",
     ),
 ]
+
+
+@app.command()
+def configure(
+    host: Annotated[
+        str,
+        typer.Option(
+            "--host",
+            help="Interface to bind the local configuration server to.",
+            metavar="HOST",
+        ),
+    ] = DEFAULT_CONFIG_SERVER_HOST,
+    port: Annotated[
+        int,
+        typer.Option(
+            "--port",
+            help="Port for the local configuration server.",
+        ),
+    ] = DEFAULT_CONFIG_SERVER_PORT,
+    open_browser: Annotated[
+        bool,
+        typer.Option(
+            "--open-browser/--no-open-browser",
+            help="Automatically open the configuration page in a browser.",
+        ),
+    ] = True,
+) -> None:
+    """Start a local web GUI for editing the .env configuration."""
+
+    if host != DEFAULT_CONFIG_SERVER_HOST:
+        typer.echo(
+            f"Warning: binding to {host} may expose your configuration, "
+            "including the Times Gate token, to other devices on the network.",
+            err=True,
+        )
+
+    typer.echo(f"Serving configuration at http://{host}:{port}/ (press Ctrl+C to stop) ...")
+
+    run_config_server(
+        host=host,
+        port=port,
+        open_browser=open_browser,
+    )
 
 
 @app.command()

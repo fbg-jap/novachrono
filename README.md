@@ -26,6 +26,7 @@ The following functionality is currently available:
 - complete five-display dashboard upload
 - local Times Gate connection check
 - `.env`-based configuration
+- local web GUI for editing configuration
 - command-line interface powered by Typer
 - automated tests with pytest
 - formatting and linting with Ruff
@@ -112,6 +113,7 @@ src/novachrono/
 ├── preview.py
 ├── units.py
 ├── weather.py
+├── webconfig.py
 ├── design/
 │   ├── __init__.py
 │   ├── components.py
@@ -269,6 +271,14 @@ Process environment variables override values from `.env`.
 
 Configuration is normalized into an immutable `AppConfig` before it is used by the application.
 
+### Configuration GUI
+
+`webconfig.py` provides a small local web GUI for editing the `.env` file.
+
+It binds to `127.0.0.1` by default so the configuration, including the Times Gate token, is not exposed to the local network.
+
+The GUI reuses the same validation rules as `config.py` and shows inline errors instead of writing an invalid `.env` file.
+
 ### Internationalization
 
 Small UI strings are translated through `i18n.py`.
@@ -340,6 +350,7 @@ The CLI is implemented with Typer.
 Current commands:
 
 ```text
+configure
 preview
 check-device
 send-clock
@@ -542,6 +553,30 @@ Using `--token` regularly is discouraged because command-line arguments may be s
 ```shell
 uv run novachrono --help
 ```
+
+### Edit Configuration in a Browser
+
+```shell
+uv run novachrono configure
+```
+
+This starts a local web server on `http://127.0.0.1:8765/` and opens it in your default browser.
+
+The form is pre-filled with the current `.env` values and writes changes back to the same file after validating them.
+
+Use `--port` to choose another port, and `--no-open-browser` to skip opening a browser automatically:
+
+```shell
+uv run novachrono configure --port 9000 --no-open-browser
+```
+
+`--host` can bind to a different interface, but this is discouraged because it can expose your configuration, including the Times Gate token, to other devices on the network:
+
+```shell
+uv run novachrono configure --host 0.0.0.0
+```
+
+Stop the server with `Ctrl+C`.
 
 ### Generate a Local Dashboard Preview
 
@@ -783,6 +818,7 @@ Potential security issues should be reported according to the [Security Policy](
 - [x] add automated formatting, linting, testing, and security checks
 - [x] add a Typer-based CLI
 - [x] add `.env`-based configuration
+- [x] add a local web GUI for editing configuration
 - [x] add basic internationalization
 - [x] add configurable Celsius and Fahrenheit rendering
 

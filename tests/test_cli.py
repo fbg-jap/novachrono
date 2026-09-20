@@ -25,6 +25,7 @@ from novachrono.sources.open_meteo import OpenMeteoError
 from novachrono.sources.scraped_duck import ScrapedDuckError
 from novachrono.units import TemperatureUnit
 from novachrono.weather import CurrentWeather, WeatherCondition
+from novachrono.webconfig import DEFAULT_CONFIG_SERVER_HOST, DEFAULT_CONFIG_SERVER_PORT
 
 runner = CliRunner()
 
@@ -56,12 +57,59 @@ def test_help_lists_available_commands() -> None:
     )
 
     assert result.exit_code == 0
+    assert "configure" in result.stdout
     assert "preview" in result.stdout
     assert "check-device" in result.stdout
     assert "send-clock" in result.stdout
     assert "send-weather" in result.stdout
     assert "send-pokemon" in result.stdout
     assert "send-dashboard" in result.stdout
+
+
+@patch("novachrono.cli.run_config_server")
+def test_configure_command_starts_server(
+    mocked_run_server: MagicMock,
+) -> None:
+    result = runner.invoke(app, ["configure"])
+
+    assert result.exit_code == 0
+
+    mocked_run_server.assert_called_once_with(
+        host=DEFAULT_CONFIG_SERVER_HOST,
+        port=DEFAULT_CONFIG_SERVER_PORT,
+        open_browser=True,
+    )
+
+
+@patch("novachrono.cli.run_config_server")
+def test_configure_command_warns_when_host_overridden(
+    mocked_run_server: MagicMock,
+) -> None:
+    result = runner.invoke(app, ["configure", "--host", "0.0.0.0"])
+
+    assert result.exit_code == 0
+    assert "may expose your configuration" in result.stderr
+
+    mocked_run_server.assert_called_once_with(
+        host="0.0.0.0",
+        port=DEFAULT_CONFIG_SERVER_PORT,
+        open_browser=True,
+    )
+
+
+@patch("novachrono.cli.run_config_server")
+def test_configure_command_supports_disabling_browser(
+    mocked_run_server: MagicMock,
+) -> None:
+    result = runner.invoke(app, ["configure", "--no-open-browser"])
+
+    assert result.exit_code == 0
+
+    mocked_run_server.assert_called_once_with(
+        host=DEFAULT_CONFIG_SERVER_HOST,
+        port=DEFAULT_CONFIG_SERVER_PORT,
+        open_browser=False,
+    )
 
 
 @patch("novachrono.cli.fetch_raid_artwork")
