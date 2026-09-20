@@ -13,6 +13,7 @@ The following functionality is currently available:
 - rendering of five 128 × 128 pixel panels
 - shared custom HUD-style visual design
 - unread-mail notifications widget using IMAP
+- Microsoft Teams notifications widget using Microsoft Graph
 - current weather widget using live Open-Meteo data
 - animated rain and fog weather states
 - Celsius and Fahrenheit display support
@@ -39,7 +40,7 @@ The current display assignment is:
 2. **Current weather**
 3. **Clock and date**
 4. **Pokémon GO raids**
-5. **Placeholder**
+5. **Microsoft Teams notifications**
 
 All panels use the same custom Novachrono design rather than reproducing the standard Divoom dashboard.
 
@@ -113,6 +114,7 @@ src/novachrono/
 ├── mail.py
 ├── pokemon_go.py
 ├── preview.py
+├── teams.py
 ├── units.py
 ├── weather.py
 ├── webconfig.py
@@ -126,6 +128,7 @@ src/novachrono/
 ├── sources/
 │   ├── __init__.py
 │   ├── imap_mail.py
+│   ├── ms_graph_teams.py
 │   ├── open_meteo.py
 │   ├── pokeapi.py
 │   ├── pokemon_artwork.py
@@ -139,6 +142,9 @@ src/novachrono/
     ├── pokemon_go/
     │   ├── __init__.py
     │   └── raid_bosses.py
+    ├── teams/
+    │   ├── __init__.py
+    │   └── notifications.py
     └── weather/
         ├── __init__.py
         ├── current.py
@@ -185,6 +191,7 @@ Current widgets:
 - current weather
 - clock and date
 - Pokémon GO raids
+- Microsoft Teams notifications
 
 Planned widgets include:
 
@@ -206,6 +213,34 @@ The mailbox is opened read-only and messages are fetched with `BODY.PEEK`, so ch
 Mail is entirely optional. If host, username, or password are not configured, the mail widget renders a "no new mail" state without attempting a network connection.
 
 If mail is configured but temporarily unreachable, `preview` and `send-dashboard` fall back to that same state instead of failing outright; `send-mail` reports the error directly, since it was asked for mail specifically.
+
+### Microsoft Teams Data
+
+The Teams widget shows the latest message posted in one configured Microsoft Teams channel, retrieved from [Microsoft Graph](https://learn.microsoft.com/en-us/graph/overview).
+
+Novachrono retrieves:
+
+- the sender of the most recent, non-deleted message in the configured channel
+- a plain-text preview of that message's body
+
+Authentication uses the OAuth 2.0 client credentials flow (app-only, no interactive login) via the [`msal`](https://pypi.org/project/msal/) library. Each command run requests a short-lived access token directly from Microsoft Entra ID using the configured tenant, client ID, and client secret; no token is cached or stored on disk.
+
+Because this uses application permissions rather than delegated (per-user) permissions, Microsoft Graph has no concept of "unread" for this widget. It always shows the latest channel message, not an unread count.
+
+#### Azure Setup
+
+Using the Teams widget requires an Azure AD app registration you control:
+
+1. In the [Azure Portal](https://portal.azure.com/), register a new application under **Microsoft Entra ID → App registrations**.
+2. Under **API permissions**, add the **Microsoft Graph** **Application** permission `ChannelMessage.Read.All` and have a tenant administrator grant admin consent.
+3. Under **Certificates & secrets**, create a client secret and copy its value immediately (it is not shown again).
+4. Note the application's **Tenant ID** and **Client ID**, and the target **Team ID** and **Channel ID** (visible in the Teams "Get link to channel" URL).
+
+`ChannelMessage.Read.All` grants read access to channel messages across the tenant, not just one channel; only configure this for a tenant you administer and trust.
+
+Teams is entirely optional. If tenant ID, client ID, client secret, team ID, or channel ID are not configured, the Teams widget renders a "no recent messages" state without contacting Microsoft Graph.
+
+If Teams is configured but temporarily unreachable, `preview` and `send-dashboard` fall back to that same state instead of failing outright; `send-teams` reports the error directly, since it was asked for Teams specifically.
 
 ### Weather Data
 
@@ -275,7 +310,7 @@ Panel index 0 -> mail
 Panel index 1 -> weather
 Panel index 2 -> clock
 Panel index 3 -> pokemon_go
-Panel index 4 -> placeholder
+Panel index 4 -> teams
 ```
 
 The physical displays are therefore numbered 1 through 5, while internal panel indices range from 0 through 4.
@@ -378,6 +413,7 @@ check-device
 send-clock
 send-weather
 send-mail
+send-teams
 send-pokemon
 send-dashboard
 ```
@@ -446,6 +482,12 @@ NOVACHRONO_MAIL_PORT=993
 NOVACHRONO_MAIL_USERNAME=
 NOVACHRONO_MAIL_PASSWORD=
 NOVACHRONO_MAIL_MAILBOX=INBOX
+
+NOVACHRONO_TEAMS_TENANT_ID=
+NOVACHRONO_TEAMS_CLIENT_ID=
+NOVACHRONO_TEAMS_CLIENT_SECRET=
+NOVACHRONO_TEAMS_TEAM_ID=
+NOVACHRONO_TEAMS_CHANNEL_ID=
 
 NOVACHRONO_TIMES_GATE_HOST=192.168.1.100
 NOVACHRONO_TIMES_GATE_TOKEN=replace-me
@@ -551,6 +593,24 @@ INBOX
 ```
 
 Most providers require an app-specific password rather than your regular account password for IMAP access. Do not commit a real mail password.
+
+### Microsoft Teams Notifications
+
+The Teams widget connects to Microsoft Graph using app-only (client credentials) authentication to show the latest message in one configured channel.
+
+```text
+NOVACHRONO_TEAMS_TENANT_ID
+NOVACHRONO_TEAMS_CLIENT_ID
+NOVACHRONO_TEAMS_CLIENT_SECRET
+NOVACHRONO_TEAMS_TEAM_ID
+NOVACHRONO_TEAMS_CHANNEL_ID
+```
+
+All five values must either be configured together or all be omitted. Leaving them empty disables the widget without an error.
+
+Setting these up requires an Azure AD app registration with the Microsoft Graph `ChannelMessage.Read.All` application permission, admin-consented by a tenant administrator. See [Microsoft Teams Data](#microsoft-teams-data) for the full setup steps.
+
+Do not commit a real client secret.
 
 ### Times Gate Host
 
@@ -714,6 +774,18 @@ Unread-mail data is retrieved live over IMAP using the configured account.
 
 Unlike `preview` and `send-dashboard`, this command requires mail to be configured and reports an error if the mailbox cannot be reached.
 
+### Send the Teams Widget
+
+```shell
+uv run novachrono send-teams
+```
+
+The Teams widget is assigned to physical display 5.
+
+The latest channel message is retrieved live from Microsoft Graph using the configured Azure AD app registration.
+
+Unlike `preview` and `send-dashboard`, this command requires Teams to be configured and reports an error if Microsoft Graph cannot be reached.
+
 ### Send the Pokémon GO Widget
 
 ```shell
@@ -746,9 +818,9 @@ Currently this means:
 - rain is animated
 - fog is animated
 - Pokémon GO raids are animated when multiple bosses are active
-- the mail widget, placeholders, and all other weather states are static
+- the mail widget, the Teams widget, and all other weather states are static
 
-If mail is configured but cannot be reached, the mail panel falls back to a "no new mail" state instead of failing the whole dashboard; a warning is printed to explain why.
+If mail or Teams is configured but cannot be reached, the affected panel falls back to its "nothing to show" state instead of failing the whole dashboard; a warning is printed to explain why.
 
 If one or more displays fail, Novachrono continues attempting the remaining displays and reports the affected display numbers afterward.
 
@@ -844,6 +916,8 @@ The test suite covers:
 - dashboard composition
 - mail rendering and unread-state handling
 - IMAP request, response, and header-decoding handling
+- Teams rendering and no-activity-state handling
+- Microsoft Graph authentication, request, response, and message-parsing handling
 - weather rendering and animation
 - Open-Meteo request, response, and weather-code handling
 - ScrapedDuck raid parsing
@@ -868,6 +942,7 @@ Never commit:
 - Divoom local tokens
 - GitHub personal access tokens
 - IMAP mail passwords
+- Microsoft Entra ID / Azure AD client secrets
 - private calendar feed URLs
 - credentials
 - `.env`
@@ -929,6 +1004,16 @@ Potential security issues should be reported according to the [Security Policy](
 - [x] place mail notifications on display 1
 - [x] support disabling the widget when mail is not configured
 - [x] treat mail as best-effort for the combined dashboard
+
+### Microsoft Teams Notifications Widget
+
+- [x] research a Microsoft Graph authentication approach appropriate for a headless CLI
+- [x] retrieve the latest message in a configured Teams channel
+- [x] render the Teams notifications widget
+- [x] place Teams notifications on display 5
+- [x] support disabling the widget when Teams is not configured
+- [x] treat Teams as best-effort for the combined dashboard
+- [x] document the required Azure AD app registration and Graph permission
 
 ### Times Gate Integration
 

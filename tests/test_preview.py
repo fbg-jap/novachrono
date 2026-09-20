@@ -15,6 +15,7 @@ from novachrono.preview import (
     create_preview,
     save_preview,
 )
+from novachrono.teams import TeamsSummary
 from novachrono.weather import CurrentWeather
 
 BERLIN = ZoneInfo("Europe/Berlin")
@@ -34,12 +35,14 @@ def dashboard(
     mail: MailSummary,
     weather: CurrentWeather,
     raid_roster: RaidRoster,
+    teams: TeamsSummary,
 ) -> tuple[Image.Image, ...]:
     return render_dashboard(
         FIXED_TIME,
         mail=mail,
         weather=weather,
         raid_roster=raid_roster,
+        teams=teams,
     )
 
 

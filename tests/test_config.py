@@ -18,6 +18,11 @@ CONFIG_ENVIRONMENT_VARIABLES = (
     "NOVACHRONO_MAIL_USERNAME",
     "NOVACHRONO_MAIL_PASSWORD",
     "NOVACHRONO_MAIL_MAILBOX",
+    "NOVACHRONO_TEAMS_TENANT_ID",
+    "NOVACHRONO_TEAMS_CLIENT_ID",
+    "NOVACHRONO_TEAMS_CLIENT_SECRET",
+    "NOVACHRONO_TEAMS_TEAM_ID",
+    "NOVACHRONO_TEAMS_CHANNEL_ID",
 )
 
 
@@ -48,6 +53,12 @@ def test_load_config_uses_defaults(tmp_path: Path) -> None:
     assert config.mail.password is None
     assert config.mail.mailbox == "INBOX"
 
+    assert config.teams.tenant_id is None
+    assert config.teams.client_id is None
+    assert config.teams.client_secret is None
+    assert config.teams.team_id is None
+    assert config.teams.channel_id is None
+
 
 def test_load_config_reads_dotenv(tmp_path: Path) -> None:
     env_file = tmp_path / ".env"
@@ -66,6 +77,11 @@ def test_load_config_reads_dotenv(tmp_path: Path) -> None:
         "NOVACHRONO_MAIL_USERNAME=user@example.com",
         "NOVACHRONO_MAIL_PASSWORD=mail-secret",
         "NOVACHRONO_MAIL_MAILBOX=Archive",
+        "NOVACHRONO_TEAMS_TENANT_ID=tenant-id",
+        "NOVACHRONO_TEAMS_CLIENT_ID=client-id",
+        "NOVACHRONO_TEAMS_CLIENT_SECRET=teams-secret",
+        "NOVACHRONO_TEAMS_TEAM_ID=team-id",
+        "NOVACHRONO_TEAMS_CHANNEL_ID=channel-id",
     )
 
     config = load_config(env_file)
@@ -85,6 +101,12 @@ def test_load_config_reads_dotenv(tmp_path: Path) -> None:
     assert config.mail.username == "user@example.com"
     assert config.mail.password == "mail-secret"
     assert config.mail.mailbox == "Archive"
+
+    assert config.teams.tenant_id == "tenant-id"
+    assert config.teams.client_id == "client-id"
+    assert config.teams.client_secret == "teams-secret"
+    assert config.teams.team_id == "team-id"
+    assert config.teams.channel_id == "channel-id"
 
 
 def test_environment_overrides_dotenv(
@@ -455,6 +477,51 @@ def test_blank_mail_values_use_defaults(tmp_path: Path) -> None:
     assert config.mail.password is None
     assert config.mail.port == 993
     assert config.mail.mailbox == "INBOX"
+
+
+@pytest.mark.parametrize(
+    "configured_variable",
+    [
+        "NOVACHRONO_TEAMS_TENANT_ID=tenant-id",
+        "NOVACHRONO_TEAMS_CLIENT_ID=client-id",
+        "NOVACHRONO_TEAMS_CLIENT_SECRET=secret",
+        "NOVACHRONO_TEAMS_TEAM_ID=team-id",
+        "NOVACHRONO_TEAMS_CHANNEL_ID=channel-id",
+    ],
+)
+def test_teams_settings_must_be_configured_together(
+    configured_variable: str,
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / ".env"
+    _write_env(env_file, configured_variable)
+
+    with pytest.raises(
+        ConfigError,
+        match="Teams tenant ID, client ID, client secret, team ID, and channel ID",
+    ):
+        load_config(env_file)
+
+
+def test_blank_teams_values_become_none(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+
+    _write_env(
+        env_file,
+        "NOVACHRONO_TEAMS_TENANT_ID=",
+        "NOVACHRONO_TEAMS_CLIENT_ID=",
+        "NOVACHRONO_TEAMS_CLIENT_SECRET=",
+        "NOVACHRONO_TEAMS_TEAM_ID=",
+        "NOVACHRONO_TEAMS_CHANNEL_ID=",
+    )
+
+    config = load_config(env_file)
+
+    assert config.teams.tenant_id is None
+    assert config.teams.client_id is None
+    assert config.teams.client_secret is None
+    assert config.teams.team_id is None
+    assert config.teams.channel_id is None
 
 
 def _write_env(
