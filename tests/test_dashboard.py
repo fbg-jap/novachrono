@@ -7,15 +7,19 @@ from PIL import Image
 
 from novachrono.dashboard import (
     CLOCK_PANEL_INDEX,
+    MAIL_PANEL_INDEX,
     POKEMON_GO_PANEL_INDEX,
     WEATHER_PANEL_INDEX,
     render_dashboard,
     render_panel,
 )
 from novachrono.design import PANEL_COUNT, PANEL_SIZE
+from novachrono.mail import MailSummary
 from novachrono.pokemon_go import RaidRoster
 from novachrono.units import TemperatureUnit
 from novachrono.weather import CurrentWeather
+
+PLACEHOLDER_PANEL_INDEX = 4
 
 BERLIN = ZoneInfo("Europe/Berlin")
 
@@ -30,17 +34,20 @@ FIXED_TIME = datetime(
 
 
 def test_current_widgets_have_expected_positions() -> None:
+    assert MAIL_PANEL_INDEX == 0
     assert WEATHER_PANEL_INDEX == 1
     assert CLOCK_PANEL_INDEX == 2
     assert POKEMON_GO_PANEL_INDEX == 3
 
 
 def test_render_dashboard_returns_expected_panels(
+    mail: MailSummary,
     weather: CurrentWeather,
     raid_roster: RaidRoster,
 ) -> None:
     panels = render_dashboard(
         FIXED_TIME,
+        mail=mail,
         weather=weather,
         raid_roster=raid_roster,
     )
@@ -77,26 +84,30 @@ def test_render_panel_rejects_invalid_index(
 @pytest.mark.parametrize(
     "panel_index",
     [
+        MAIL_PANEL_INDEX,
         WEATHER_PANEL_INDEX,
         CLOCK_PANEL_INDEX,
         POKEMON_GO_PANEL_INDEX,
     ],
 )
 def test_dashboard_renders_widgets_on_configured_panels(
+    mail: MailSummary,
     weather: CurrentWeather,
     raid_roster: RaidRoster,
     panel_index: int,
 ) -> None:
     panels = render_dashboard(
         FIXED_TIME,
+        mail=mail,
         weather=weather,
         raid_roster=raid_roster,
     )
 
-    assert panels[panel_index].tobytes() != panels[0].tobytes()
+    assert panels[panel_index].tobytes() != panels[PLACEHOLDER_PANEL_INDEX].tobytes()
 
 
 def test_dashboard_passes_artwork_to_pokemon_renderer(
+    mail: MailSummary,
     weather: CurrentWeather,
     raid_roster: RaidRoster,
 ) -> None:
@@ -115,6 +126,7 @@ def test_dashboard_passes_artwork_to_pokemon_renderer(
 
         render_dashboard(
             FIXED_TIME,
+            mail=mail,
             weather=weather,
             raid_roster=raid_roster,
             raid_artwork=raid_artwork,
@@ -127,17 +139,20 @@ def test_dashboard_passes_artwork_to_pokemon_renderer(
 
 
 def test_dashboard_is_deterministic_for_given_input(
+    mail: MailSummary,
     weather: CurrentWeather,
     raid_roster: RaidRoster,
 ) -> None:
     first_dashboard = render_dashboard(
         FIXED_TIME,
+        mail=mail,
         weather=weather,
         raid_roster=raid_roster,
     )
 
     second_dashboard = render_dashboard(
         FIXED_TIME,
+        mail=mail,
         weather=weather,
         raid_roster=raid_roster,
     )
@@ -151,11 +166,13 @@ def test_dashboard_is_deterministic_for_given_input(
 
 
 def test_temperature_unit_changes_only_weather_panel(
+    mail: MailSummary,
     weather: CurrentWeather,
     raid_roster: RaidRoster,
 ) -> None:
     celsius_dashboard = render_dashboard(
         FIXED_TIME,
+        mail=mail,
         weather=weather,
         raid_roster=raid_roster,
         temperature_unit=TemperatureUnit.CELSIUS,
@@ -163,6 +180,7 @@ def test_temperature_unit_changes_only_weather_panel(
 
     fahrenheit_dashboard = render_dashboard(
         FIXED_TIME,
+        mail=mail,
         weather=weather,
         raid_roster=raid_roster,
         temperature_unit=TemperatureUnit.FAHRENHEIT,
@@ -171,6 +189,11 @@ def test_temperature_unit_changes_only_weather_panel(
     assert (
         celsius_dashboard[WEATHER_PANEL_INDEX].tobytes()
         != fahrenheit_dashboard[WEATHER_PANEL_INDEX].tobytes()
+    )
+
+    assert (
+        celsius_dashboard[MAIL_PANEL_INDEX].tobytes()
+        == fahrenheit_dashboard[MAIL_PANEL_INDEX].tobytes()
     )
 
     assert (
@@ -184,12 +207,14 @@ def test_temperature_unit_changes_only_weather_panel(
     )
 
 
-def test_locale_changes_only_weather_panel(
+def test_locale_changes_weather_and_mail_panels(
+    mail: MailSummary,
     weather: CurrentWeather,
     raid_roster: RaidRoster,
 ) -> None:
     german_dashboard = render_dashboard(
         FIXED_TIME,
+        mail=mail,
         weather=weather,
         raid_roster=raid_roster,
         locale="de_DE",
@@ -197,6 +222,7 @@ def test_locale_changes_only_weather_panel(
 
     english_dashboard = render_dashboard(
         FIXED_TIME,
+        mail=mail,
         weather=weather,
         raid_roster=raid_roster,
         locale="en_US",
@@ -208,6 +234,11 @@ def test_locale_changes_only_weather_panel(
     )
 
     assert (
+        german_dashboard[MAIL_PANEL_INDEX].tobytes()
+        != english_dashboard[MAIL_PANEL_INDEX].tobytes()
+    )
+
+    assert (
         german_dashboard[CLOCK_PANEL_INDEX].tobytes()
         == english_dashboard[CLOCK_PANEL_INDEX].tobytes()
     )
@@ -215,4 +246,47 @@ def test_locale_changes_only_weather_panel(
     assert (
         german_dashboard[POKEMON_GO_PANEL_INDEX].tobytes()
         == english_dashboard[POKEMON_GO_PANEL_INDEX].tobytes()
+    )
+
+
+def test_mail_changes_only_mail_panel(
+    weather: CurrentWeather,
+    raid_roster: RaidRoster,
+) -> None:
+    unread_dashboard = render_dashboard(
+        FIXED_TIME,
+        mail=MailSummary(
+            unread_count=3,
+            latest_sender="Alice",
+            latest_subject="Hello",
+        ),
+        weather=weather,
+        raid_roster=raid_roster,
+    )
+
+    no_mail_dashboard = render_dashboard(
+        FIXED_TIME,
+        mail=MailSummary(unread_count=0),
+        weather=weather,
+        raid_roster=raid_roster,
+    )
+
+    assert (
+        unread_dashboard[MAIL_PANEL_INDEX].tobytes()
+        != no_mail_dashboard[MAIL_PANEL_INDEX].tobytes()
+    )
+
+    assert (
+        unread_dashboard[WEATHER_PANEL_INDEX].tobytes()
+        == no_mail_dashboard[WEATHER_PANEL_INDEX].tobytes()
+    )
+
+    assert (
+        unread_dashboard[CLOCK_PANEL_INDEX].tobytes()
+        == no_mail_dashboard[CLOCK_PANEL_INDEX].tobytes()
+    )
+
+    assert (
+        unread_dashboard[POKEMON_GO_PANEL_INDEX].tobytes()
+        == no_mail_dashboard[POKEMON_GO_PANEL_INDEX].tobytes()
     )

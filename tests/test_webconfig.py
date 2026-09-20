@@ -63,6 +63,11 @@ def test_post_valid_values_writes_env_file(
     assert values["NOVACHRONO_WEATHER_LONGITUDE"] == "8.80169"
     assert values["NOVACHRONO_TIMES_GATE_HOST"] == "192.168.1.100"
     assert values["NOVACHRONO_TIMES_GATE_TOKEN"] == "secret-token"
+    assert values["NOVACHRONO_MAIL_HOST"] == "imap.example.com"
+    assert values["NOVACHRONO_MAIL_PORT"] == "993"
+    assert values["NOVACHRONO_MAIL_USERNAME"] == "user@example.com"
+    assert values["NOVACHRONO_MAIL_PASSWORD"] == "mail-secret"
+    assert values["NOVACHRONO_MAIL_MAILBOX"] == "INBOX"
 
 
 def test_post_invalid_timezone_does_not_write_env_file(
@@ -106,6 +111,11 @@ def test_post_allows_blank_optional_fields(
         NOVACHRONO_WEATHER_LONGITUDE="",
         NOVACHRONO_TIMES_GATE_HOST="",
         NOVACHRONO_TIMES_GATE_TOKEN="",
+        NOVACHRONO_MAIL_HOST="",
+        NOVACHRONO_MAIL_PORT="",
+        NOVACHRONO_MAIL_USERNAME="",
+        NOVACHRONO_MAIL_PASSWORD="",
+        NOVACHRONO_MAIL_MAILBOX="",
     )
 
     with urlopen(_server_url(httpd), data=_encode(submission)) as response:
@@ -118,6 +128,25 @@ def test_post_allows_blank_optional_fields(
     assert values["NOVACHRONO_WEATHER_LONGITUDE"] == ""
     assert values["NOVACHRONO_TIMES_GATE_HOST"] == ""
     assert values["NOVACHRONO_TIMES_GATE_TOKEN"] == ""
+    assert values["NOVACHRONO_MAIL_HOST"] == ""
+    assert values["NOVACHRONO_MAIL_PORT"] == ""
+    assert values["NOVACHRONO_MAIL_USERNAME"] == ""
+    assert values["NOVACHRONO_MAIL_PASSWORD"] == ""
+    assert values["NOVACHRONO_MAIL_MAILBOX"] == ""
+
+
+def test_post_incomplete_mail_settings_reports_error(
+    running_server: tuple[HTTPServer, Path],
+) -> None:
+    httpd, env_file = running_server
+
+    submission = dict(_VALID_SUBMISSION, NOVACHRONO_MAIL_PASSWORD="")
+
+    with urlopen(_server_url(httpd), data=_encode(submission)) as response:
+        body = response.read().decode("utf-8")
+
+    assert "Mail host, username, and password must be configured together" in body
+    assert not env_file.exists()
 
 
 _VALID_SUBMISSION = {
@@ -128,6 +157,11 @@ _VALID_SUBMISSION = {
     "NOVACHRONO_WEATHER_LONGITUDE": "8.80169",
     "NOVACHRONO_TIMES_GATE_HOST": "192.168.1.100",
     "NOVACHRONO_TIMES_GATE_TOKEN": "secret-token",
+    "NOVACHRONO_MAIL_HOST": "imap.example.com",
+    "NOVACHRONO_MAIL_PORT": "993",
+    "NOVACHRONO_MAIL_USERNAME": "user@example.com",
+    "NOVACHRONO_MAIL_PASSWORD": "mail-secret",
+    "NOVACHRONO_MAIL_MAILBOX": "INBOX",
 }
 
 

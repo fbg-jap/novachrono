@@ -1,7 +1,19 @@
 import pytest
 
+from novachrono.mail import MailSummary
 from novachrono.pokemon_go import RaidBoss, RaidRoster
 from novachrono.weather import CurrentWeather, WeatherCondition
+
+
+@pytest.fixture
+def mail() -> MailSummary:
+    """Standard unread-mail summary used across the suite."""
+
+    return MailSummary(
+        unread_count=2,
+        latest_sender="Alice <alice@example.com>",
+        latest_subject="Weekly update",
+    )
 
 
 @pytest.fixture

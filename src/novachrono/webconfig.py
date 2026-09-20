@@ -12,7 +12,14 @@ from dotenv import dotenv_values, set_key
 
 from novachrono.config import (
     DEFAULT_ENV_FILENAME,
+    DEFAULT_MAIL_MAILBOX,
+    DEFAULT_MAIL_PORT,
     LOCALE_VARIABLE,
+    MAIL_HOST_VARIABLE,
+    MAIL_MAILBOX_VARIABLE,
+    MAIL_PASSWORD_VARIABLE,
+    MAIL_PORT_VARIABLE,
+    MAIL_USERNAME_VARIABLE,
     TEMPERATURE_UNIT_VARIABLE,
     TIMES_GATE_HOST_VARIABLE,
     TIMES_GATE_TOKEN_VARIABLE,
@@ -22,6 +29,7 @@ from novachrono.config import (
     ConfigError,
     parse_temperature_unit,
     validate_locale,
+    validate_mail_settings,
     validate_timezone,
     validate_weather_settings,
 )
@@ -60,6 +68,15 @@ _FIELDS: Final[tuple[_Field, ...]] = (
         help_text="Local IP address or hostname only, e.g. 192.168.1.100.",
     ),
     _Field(TIMES_GATE_TOKEN_VARIABLE, "Times Gate token", input_type="password"),
+    _Field(
+        MAIL_HOST_VARIABLE,
+        "Mail IMAP host",
+        help_text="Leave host, username, and password empty to disable the mail widget.",
+    ),
+    _Field(MAIL_PORT_VARIABLE, "Mail IMAP port", help_text=f"Default: {DEFAULT_MAIL_PORT}."),
+    _Field(MAIL_USERNAME_VARIABLE, "Mail username"),
+    _Field(MAIL_PASSWORD_VARIABLE, "Mail password", input_type="password"),
+    _Field(MAIL_MAILBOX_VARIABLE, "Mail mailbox", help_text=f"Default: {DEFAULT_MAIL_MAILBOX}."),
 )
 
 
@@ -168,6 +185,29 @@ def _validate_submission(values: dict[str, str | None]) -> tuple[str, ...]:
         except ConfigError as error:
             errors.append(str(error))
 
+    mail_host = _clean(values.get(MAIL_HOST_VARIABLE))
+    mail_username = _clean(values.get(MAIL_USERNAME_VARIABLE))
+    mail_password = _clean(values.get(MAIL_PASSWORD_VARIABLE))
+    mail_mailbox = _clean(values.get(MAIL_MAILBOX_VARIABLE)) or DEFAULT_MAIL_MAILBOX
+
+    mail_port, mail_port_error = _parse_optional_int(
+        _clean(values.get(MAIL_PORT_VARIABLE)), MAIL_PORT_VARIABLE
+    )
+
+    if mail_port_error:
+        errors.append(mail_port_error)
+    else:
+        try:
+            validate_mail_settings(
+                host=mail_host,
+                port=mail_port if mail_port is not None else DEFAULT_MAIL_PORT,
+                username=mail_username,
+                password=mail_password,
+                mailbox=mail_mailbox,
+            )
+        except ConfigError as error:
+            errors.append(str(error))
+
     return tuple(errors)
 
 
@@ -187,6 +227,16 @@ def _parse_optional_float(value: str | None, variable: str) -> tuple[float | Non
 
     try:
         return float(value), None
+    except ValueError:
+        return None, f"Invalid numeric value for {variable}: {value}"
+
+
+def _parse_optional_int(value: str | None, variable: str) -> tuple[int | None, str | None]:
+    if value is None:
+        return None, None
+
+    try:
+        return int(value), None
     except ValueError:
         return None, f"Invalid numeric value for {variable}: {value}"
 

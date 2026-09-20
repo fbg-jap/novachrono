@@ -12,15 +12,18 @@ from novachrono.design import (
     draw_placeholder_header,
 )
 from novachrono.i18n import DEFAULT_LOCALE
+from novachrono.mail import MailSummary
 from novachrono.pokemon_go import RaidRoster
 from novachrono.units import TemperatureUnit
 from novachrono.weather import CurrentWeather
 from novachrono.widgets.clock import render_clock_panel
+from novachrono.widgets.mail import render_mail_panel
 from novachrono.widgets.pokemon_go import render_raid_panel
 from novachrono.widgets.weather import render_weather_panel
 
 DEFAULT_TIMEZONE = ZoneInfo(DEFAULT_TIMEZONE_NAME)
 
+MAIL_PANEL_INDEX = 0
 WEATHER_PANEL_INDEX = 1
 CLOCK_PANEL_INDEX = 2
 POKEMON_GO_PANEL_INDEX = 3
@@ -46,6 +49,7 @@ def render_panel(index: int) -> Image.Image:
 def render_dashboard(
     now: datetime | None = None,
     *,
+    mail: MailSummary,
     weather: CurrentWeather,
     raid_roster: RaidRoster,
     raid_artwork: Mapping[str, Image.Image] | None = None,
@@ -58,6 +62,11 @@ def render_dashboard(
     current_time = now if now is not None else datetime.now(timezone)
 
     panels = [render_panel(index) for index in range(PANEL_COUNT)]
+
+    panels[MAIL_PANEL_INDEX] = render_mail_panel(
+        mail,
+        locale=locale,
+    )
 
     panels[WEATHER_PANEL_INDEX] = render_weather_panel(
         weather,
