@@ -68,6 +68,11 @@ def test_post_valid_values_writes_env_file(
     assert values["NOVACHRONO_MAIL_USERNAME"] == "user@example.com"
     assert values["NOVACHRONO_MAIL_PASSWORD"] == "mail-secret"
     assert values["NOVACHRONO_MAIL_MAILBOX"] == "INBOX"
+    assert values["NOVACHRONO_TEAMS_TENANT_ID"] == "tenant-id"
+    assert values["NOVACHRONO_TEAMS_CLIENT_ID"] == "client-id"
+    assert values["NOVACHRONO_TEAMS_CLIENT_SECRET"] == "teams-secret"
+    assert values["NOVACHRONO_TEAMS_TEAM_ID"] == "team-id"
+    assert values["NOVACHRONO_TEAMS_CHANNEL_ID"] == "channel-id"
 
 
 def test_post_invalid_timezone_does_not_write_env_file(
@@ -116,6 +121,11 @@ def test_post_allows_blank_optional_fields(
         NOVACHRONO_MAIL_USERNAME="",
         NOVACHRONO_MAIL_PASSWORD="",
         NOVACHRONO_MAIL_MAILBOX="",
+        NOVACHRONO_TEAMS_TENANT_ID="",
+        NOVACHRONO_TEAMS_CLIENT_ID="",
+        NOVACHRONO_TEAMS_CLIENT_SECRET="",
+        NOVACHRONO_TEAMS_TEAM_ID="",
+        NOVACHRONO_TEAMS_CHANNEL_ID="",
     )
 
     with urlopen(_server_url(httpd), data=_encode(submission)) as response:
@@ -133,6 +143,11 @@ def test_post_allows_blank_optional_fields(
     assert values["NOVACHRONO_MAIL_USERNAME"] == ""
     assert values["NOVACHRONO_MAIL_PASSWORD"] == ""
     assert values["NOVACHRONO_MAIL_MAILBOX"] == ""
+    assert values["NOVACHRONO_TEAMS_TENANT_ID"] == ""
+    assert values["NOVACHRONO_TEAMS_CLIENT_ID"] == ""
+    assert values["NOVACHRONO_TEAMS_CLIENT_SECRET"] == ""
+    assert values["NOVACHRONO_TEAMS_TEAM_ID"] == ""
+    assert values["NOVACHRONO_TEAMS_CHANNEL_ID"] == ""
 
 
 def test_post_incomplete_mail_settings_reports_error(
@@ -149,6 +164,20 @@ def test_post_incomplete_mail_settings_reports_error(
     assert not env_file.exists()
 
 
+def test_post_incomplete_teams_settings_reports_error(
+    running_server: tuple[HTTPServer, Path],
+) -> None:
+    httpd, env_file = running_server
+
+    submission = dict(_VALID_SUBMISSION, NOVACHRONO_TEAMS_CLIENT_SECRET="")
+
+    with urlopen(_server_url(httpd), data=_encode(submission)) as response:
+        body = response.read().decode("utf-8")
+
+    assert "Teams tenant ID, client ID, client secret, team ID, and channel ID" in body
+    assert not env_file.exists()
+
+
 _VALID_SUBMISSION = {
     "NOVACHRONO_LOCALE": "en_US",
     "NOVACHRONO_TIMEZONE": "Europe/Berlin",
@@ -162,6 +191,11 @@ _VALID_SUBMISSION = {
     "NOVACHRONO_MAIL_USERNAME": "user@example.com",
     "NOVACHRONO_MAIL_PASSWORD": "mail-secret",
     "NOVACHRONO_MAIL_MAILBOX": "INBOX",
+    "NOVACHRONO_TEAMS_TENANT_ID": "tenant-id",
+    "NOVACHRONO_TEAMS_CLIENT_ID": "client-id",
+    "NOVACHRONO_TEAMS_CLIENT_SECRET": "teams-secret",
+    "NOVACHRONO_TEAMS_TEAM_ID": "team-id",
+    "NOVACHRONO_TEAMS_CHANNEL_ID": "channel-id",
 }
 
 

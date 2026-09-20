@@ -11,6 +11,7 @@ from novachrono.cli import app
 from novachrono.config import (
     AppConfig,
     MailSettings,
+    TeamsSettings,
     TimesGateSettings,
     WeatherSettings,
 )
@@ -18,6 +19,7 @@ from novachrono.dashboard import (
     CLOCK_PANEL_INDEX,
     MAIL_PANEL_INDEX,
     POKEMON_GO_PANEL_INDEX,
+    TEAMS_PANEL_INDEX,
     WEATHER_PANEL_INDEX,
 )
 from novachrono.design import PANEL_COUNT, PANEL_SIZE
@@ -25,8 +27,10 @@ from novachrono.mail import MailSummary
 from novachrono.outputs.times_gate import TimesGateError
 from novachrono.pokemon_go import RaidBoss, RaidRoster
 from novachrono.sources.imap_mail import MailError
+from novachrono.sources.ms_graph_teams import TeamsError
 from novachrono.sources.open_meteo import OpenMeteoError
 from novachrono.sources.scraped_duck import ScrapedDuckError
+from novachrono.teams import TeamsSummary
 from novachrono.units import TemperatureUnit
 from novachrono.weather import CurrentWeather, WeatherCondition
 from novachrono.webconfig import DEFAULT_CONFIG_SERVER_HOST, DEFAULT_CONFIG_SERVER_PORT
@@ -67,6 +71,7 @@ def test_help_lists_available_commands() -> None:
     assert "send-clock" in result.stdout
     assert "send-weather" in result.stdout
     assert "send-mail" in result.stdout
+    assert "send-teams" in result.stdout
     assert "send-pokemon" in result.stdout
     assert "send-dashboard" in result.stdout
 
@@ -202,6 +207,7 @@ def test_preview_passes_external_data_to_dashboard(
         mail=MailSummary(unread_count=0),
         weather=weather,
         raid_roster=raid_roster,
+        teams=TeamsSummary(),
         raid_artwork=artwork,
         timezone=app_config.timezone,
         locale=app_config.locale,
@@ -559,6 +565,132 @@ def test_preview_treats_mail_errors_as_best_effort(
     assert "Warning: could not retrieve mail" in result.stderr
 
 
+@patch("novachrono.cli.TimesGateClient")
+@patch("novachrono.cli.load_config")
+def test_send_teams_reports_missing_teams_configuration(
+    mocked_load_config: MagicMock,
+    mocked_client_class: MagicMock,
+) -> None:
+    mocked_load_config.return_value = _create_app_config()
+
+    result = runner.invoke(
+        app,
+        ["send-teams"],
+    )
+
+    assert result.exit_code == 1
+    assert "NOVACHRONO_TEAMS_TENANT_ID" in result.stderr
+    assert "NOVACHRONO_TEAMS_CLIENT_ID" in result.stderr
+    assert "NOVACHRONO_TEAMS_CLIENT_SECRET" in result.stderr
+    assert "NOVACHRONO_TEAMS_TEAM_ID" in result.stderr
+    assert "NOVACHRONO_TEAMS_CHANNEL_ID" in result.stderr
+
+    mocked_client_class.return_value.send_image.assert_not_called()
+
+
+@patch("novachrono.cli.fetch_teams_summary")
+@patch("novachrono.cli.TimesGateClient")
+@patch("novachrono.cli.load_config")
+def test_send_teams_targets_teams_display(
+    mocked_load_config: MagicMock,
+    mocked_client_class: MagicMock,
+    mocked_fetch_teams: MagicMock,
+    teams: TeamsSummary,
+) -> None:
+    mocked_load_config.return_value = _create_app_config(
+        teams_tenant_id="tenant",
+        teams_client_id="client",
+        teams_client_secret="secret",
+        teams_team_id="team",
+        teams_channel_id="channel",
+    )
+    mocked_fetch_teams.return_value = teams
+
+    mocked_client = mocked_client_class.return_value
+    mocked_client.send_image.return_value = {
+        "ReturnCode": 0,
+    }
+
+    result = runner.invoke(
+        app,
+        ["send-teams"],
+    )
+
+    assert result.exit_code == 0
+
+    mocked_client.send_animation.assert_not_called()
+    assert mocked_client.send_image.call_args.kwargs["panel_index"] == TEAMS_PANEL_INDEX
+
+
+@patch("novachrono.cli.fetch_teams_summary")
+@patch("novachrono.cli.TimesGateClient")
+@patch("novachrono.cli.load_config")
+def test_send_teams_reports_teams_error(
+    mocked_load_config: MagicMock,
+    mocked_client_class: MagicMock,
+    mocked_fetch_teams: MagicMock,
+) -> None:
+    mocked_load_config.return_value = _create_app_config(
+        teams_tenant_id="tenant",
+        teams_client_id="client",
+        teams_client_secret="secret",
+        teams_team_id="team",
+        teams_channel_id="channel",
+    )
+    mocked_fetch_teams.side_effect = TeamsError("Teams service unavailable")
+
+    result = runner.invoke(
+        app,
+        ["send-teams"],
+    )
+
+    assert result.exit_code == 1
+    assert "Teams service unavailable" in result.stderr
+
+
+@patch("novachrono.cli.fetch_teams_summary")
+@patch("novachrono.cli.fetch_raid_artwork")
+@patch("novachrono.cli._load_raid_roster")
+@patch("novachrono.cli._load_current_weather")
+@patch("novachrono.cli.load_config")
+def test_preview_treats_teams_errors_as_best_effort(
+    mocked_load_config: MagicMock,
+    mocked_load_weather: MagicMock,
+    mocked_load_raids: MagicMock,
+    mocked_fetch_artwork: MagicMock,
+    mocked_fetch_teams: MagicMock,
+    tmp_path: Path,
+    weather: CurrentWeather,
+    raid_roster: RaidRoster,
+) -> None:
+    mocked_load_config.return_value = _create_app_config(
+        teams_tenant_id="tenant",
+        teams_client_id="client",
+        teams_client_secret="secret",
+        teams_team_id="team",
+        teams_channel_id="channel",
+    )
+    mocked_load_weather.return_value = weather
+    mocked_load_raids.return_value = raid_roster
+    mocked_fetch_artwork.return_value = {}
+    mocked_fetch_teams.side_effect = TeamsError("Teams service unavailable")
+
+    destination = tmp_path / "preview.png"
+
+    result = runner.invoke(
+        app,
+        [
+            "preview",
+            "--output",
+            str(destination),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert destination.is_file()
+    assert "Warning: could not retrieve Teams messages" in result.stderr
+
+
 @patch("novachrono.cli.fetch_raid_artwork")
 @patch("novachrono.cli._load_current_weather")
 @patch("novachrono.cli.TimesGateClient")
@@ -754,7 +886,7 @@ def test_send_dashboard_uses_clock_animation_and_static_other_panels(
         MAIL_PANEL_INDEX,
         WEATHER_PANEL_INDEX,
         POKEMON_GO_PANEL_INDEX,
-        4,
+        TEAMS_PANEL_INDEX,
     ]
 
     clock_arguments = _animation_arguments_for_panel(
@@ -942,6 +1074,11 @@ def _create_app_config(
     mail_host: str | None = None,
     mail_username: str | None = None,
     mail_password: str | None = None,
+    teams_tenant_id: str | None = None,
+    teams_client_id: str | None = None,
+    teams_client_secret: str | None = None,
+    teams_team_id: str | None = None,
+    teams_channel_id: str | None = None,
 ) -> AppConfig:
     return AppConfig(
         timezone=ZoneInfo("Europe/Berlin"),
@@ -961,5 +1098,12 @@ def _create_app_config(
             username=mail_username,
             password=mail_password,
             mailbox="INBOX",
+        ),
+        teams=TeamsSettings(
+            tenant_id=teams_tenant_id,
+            client_id=teams_client_id,
+            client_secret=teams_client_secret,
+            team_id=teams_team_id,
+            channel_id=teams_channel_id,
         ),
     )

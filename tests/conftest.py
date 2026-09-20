@@ -2,6 +2,7 @@ import pytest
 
 from novachrono.mail import MailSummary
 from novachrono.pokemon_go import RaidBoss, RaidRoster
+from novachrono.teams import TeamsSummary
 from novachrono.weather import CurrentWeather, WeatherCondition
 
 
@@ -13,6 +14,16 @@ def mail() -> MailSummary:
         unread_count=2,
         latest_sender="Alice <alice@example.com>",
         latest_subject="Weekly update",
+    )
+
+
+@pytest.fixture
+def teams() -> TeamsSummary:
+    """Standard Teams channel activity used across the suite."""
+
+    return TeamsSummary(
+        latest_sender="Bob",
+        latest_message_preview="Standup moved to 10am",
     )
 
 

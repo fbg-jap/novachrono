@@ -20,6 +20,11 @@ from novachrono.config import (
     MAIL_PASSWORD_VARIABLE,
     MAIL_PORT_VARIABLE,
     MAIL_USERNAME_VARIABLE,
+    TEAMS_CHANNEL_ID_VARIABLE,
+    TEAMS_CLIENT_ID_VARIABLE,
+    TEAMS_CLIENT_SECRET_VARIABLE,
+    TEAMS_TEAM_ID_VARIABLE,
+    TEAMS_TENANT_ID_VARIABLE,
     TEMPERATURE_UNIT_VARIABLE,
     TIMES_GATE_HOST_VARIABLE,
     TIMES_GATE_TOKEN_VARIABLE,
@@ -30,6 +35,7 @@ from novachrono.config import (
     parse_temperature_unit,
     validate_locale,
     validate_mail_settings,
+    validate_teams_settings,
     validate_timezone,
     validate_weather_settings,
 )
@@ -77,6 +83,15 @@ _FIELDS: Final[tuple[_Field, ...]] = (
     _Field(MAIL_USERNAME_VARIABLE, "Mail username"),
     _Field(MAIL_PASSWORD_VARIABLE, "Mail password", input_type="password"),
     _Field(MAIL_MAILBOX_VARIABLE, "Mail mailbox", help_text=f"Default: {DEFAULT_MAIL_MAILBOX}."),
+    _Field(
+        TEAMS_TENANT_ID_VARIABLE,
+        "Teams tenant ID",
+        help_text="Leave all five Teams fields empty to disable the Teams widget.",
+    ),
+    _Field(TEAMS_CLIENT_ID_VARIABLE, "Teams client ID"),
+    _Field(TEAMS_CLIENT_SECRET_VARIABLE, "Teams client secret", input_type="password"),
+    _Field(TEAMS_TEAM_ID_VARIABLE, "Teams team ID"),
+    _Field(TEAMS_CHANNEL_ID_VARIABLE, "Teams channel ID"),
 )
 
 
@@ -207,6 +222,17 @@ def _validate_submission(values: dict[str, str | None]) -> tuple[str, ...]:
             )
         except ConfigError as error:
             errors.append(str(error))
+
+    try:
+        validate_teams_settings(
+            tenant_id=_clean(values.get(TEAMS_TENANT_ID_VARIABLE)),
+            client_id=_clean(values.get(TEAMS_CLIENT_ID_VARIABLE)),
+            client_secret=_clean(values.get(TEAMS_CLIENT_SECRET_VARIABLE)),
+            team_id=_clean(values.get(TEAMS_TEAM_ID_VARIABLE)),
+            channel_id=_clean(values.get(TEAMS_CHANNEL_ID_VARIABLE)),
+        )
+    except ConfigError as error:
+        errors.append(str(error))
 
     return tuple(errors)
 

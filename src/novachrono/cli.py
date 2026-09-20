@@ -10,6 +10,11 @@ from novachrono.config import (
     MAIL_HOST_VARIABLE,
     MAIL_PASSWORD_VARIABLE,
     MAIL_USERNAME_VARIABLE,
+    TEAMS_CHANNEL_ID_VARIABLE,
+    TEAMS_CLIENT_ID_VARIABLE,
+    TEAMS_CLIENT_SECRET_VARIABLE,
+    TEAMS_TEAM_ID_VARIABLE,
+    TEAMS_TENANT_ID_VARIABLE,
     TIMES_GATE_HOST_VARIABLE,
     TIMES_GATE_TOKEN_VARIABLE,
     WEATHER_LATITUDE_VARIABLE,
@@ -22,6 +27,7 @@ from novachrono.dashboard import (
     CLOCK_PANEL_INDEX,
     MAIL_PANEL_INDEX,
     POKEMON_GO_PANEL_INDEX,
+    TEAMS_PANEL_INDEX,
     WEATHER_PANEL_INDEX,
     render_dashboard,
 )
@@ -34,6 +40,7 @@ from novachrono.outputs.times_gate import (
 from novachrono.pokemon_go import RaidRoster
 from novachrono.preview import create_preview, save_preview
 from novachrono.sources.imap_mail import MailError, fetch_mail_summary
+from novachrono.sources.ms_graph_teams import TeamsError, fetch_teams_summary
 from novachrono.sources.open_meteo import (
     OpenMeteoError,
     fetch_current_weather,
@@ -44,6 +51,7 @@ from novachrono.sources.scraped_duck import (
     ScrapedDuckError,
     fetch_raid_roster,
 )
+from novachrono.teams import TeamsSummary
 from novachrono.weather import CurrentWeather, WeatherCondition
 from novachrono.webconfig import (
     DEFAULT_CONFIG_SERVER_HOST,
@@ -53,6 +61,7 @@ from novachrono.webconfig import (
 from novachrono.widgets.clock import render_clock_animation
 from novachrono.widgets.mail import render_mail_panel
 from novachrono.widgets.pokemon_go import render_raid_animation
+from novachrono.widgets.teams import render_teams_panel
 from novachrono.widgets.weather import render_weather_animation
 
 CLOCK_FRAME_DURATION_MS: Final = 250
@@ -146,6 +155,7 @@ def preview(
     config = _load_app_config()
 
     mail = _load_mail_summary_best_effort(config)
+    teams = _load_teams_summary_best_effort(config)
     weather = _load_current_weather(config)
     raid_roster = _load_raid_roster(config)
     raid_artwork = fetch_raid_artwork(raid_roster)
@@ -154,6 +164,7 @@ def preview(
         mail=mail,
         weather=weather,
         raid_roster=raid_roster,
+        teams=teams,
         raid_artwork=raid_artwork,
         timezone=config.timezone,
         locale=config.locale,
@@ -292,6 +303,34 @@ def send_mail(
     )
 
 
+@app.command(name="send-teams")
+def send_teams(
+    host: HostOption = None,
+    token: TokenOption = None,
+) -> None:
+    """Retrieve and send the Microsoft Teams notifications panel."""
+
+    app_config = _load_app_config()
+
+    client = _create_times_gate_client(
+        app_config=app_config,
+        host=host,
+        local_token=token,
+    )
+
+    teams = _load_teams_summary(app_config)
+
+    frame = render_teams_panel(teams)
+
+    _send_widget_frames(
+        client=client,
+        panel_index=TEAMS_PANEL_INDEX,
+        frames=(frame,),
+        frame_duration_ms=None,
+        name="Teams",
+    )
+
+
 @app.command(name="send-pokemon")
 def send_pokemon(
     host: HostOption = None,
@@ -340,6 +379,7 @@ def send_dashboard(
     )
 
     mail = _load_mail_summary_best_effort(app_config)
+    teams = _load_teams_summary_best_effort(app_config)
     weather = _load_current_weather(app_config)
     raid_roster = _load_raid_roster(app_config)
     raid_artwork = fetch_raid_artwork(raid_roster)
@@ -348,6 +388,7 @@ def send_dashboard(
         mail=mail,
         weather=weather,
         raid_roster=raid_roster,
+        teams=teams,
         raid_artwork=raid_artwork,
         timezone=app_config.timezone,
         locale=app_config.locale,
@@ -587,6 +628,71 @@ def _fetch_configured_mail_summary(
         username=app_config.mail.username,
         password=app_config.mail.password,
         mailbox=app_config.mail.mailbox,
+    )
+
+
+def _load_teams_summary(
+    app_config: AppConfig,
+) -> TeamsSummary:
+    """Load the Teams summary, exiting with an error if Teams is not usable."""
+
+    if not _teams_settings_configured(app_config):
+        missing_variables = ", ".join(
+            (
+                TEAMS_TENANT_ID_VARIABLE,
+                TEAMS_CLIENT_ID_VARIABLE,
+                TEAMS_CLIENT_SECRET_VARIABLE,
+                TEAMS_TEAM_ID_VARIABLE,
+                TEAMS_CHANNEL_ID_VARIABLE,
+            )
+        )
+
+        _exit_with_error(f"Missing required Teams configuration: {missing_variables}")
+
+    try:
+        return _fetch_configured_teams_summary(app_config)
+    except TeamsError as error:
+        _exit_with_error(str(error))
+
+
+def _load_teams_summary_best_effort(
+    app_config: AppConfig,
+) -> TeamsSummary:
+    """Load the Teams summary without failing the whole dashboard on error."""
+
+    if not _teams_settings_configured(app_config):
+        return TeamsSummary()
+
+    try:
+        return _fetch_configured_teams_summary(app_config)
+    except TeamsError as error:
+        typer.echo(f"Warning: could not retrieve Teams messages: {error}", err=True)
+        return TeamsSummary()
+
+
+def _teams_settings_configured(
+    app_config: AppConfig,
+) -> bool:
+    teams = app_config.teams
+
+    return (
+        teams.tenant_id is not None
+        and teams.client_id is not None
+        and teams.client_secret is not None
+        and teams.team_id is not None
+        and teams.channel_id is not None
+    )
+
+
+def _fetch_configured_teams_summary(
+    app_config: AppConfig,
+) -> TeamsSummary:
+    return fetch_teams_summary(
+        tenant_id=app_config.teams.tenant_id,
+        client_id=app_config.teams.client_id,
+        client_secret=app_config.teams.client_secret,
+        team_id=app_config.teams.team_id,
+        channel_id=app_config.teams.channel_id,
     )
 
 

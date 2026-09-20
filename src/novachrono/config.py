@@ -32,6 +32,12 @@ MAIL_MAILBOX_VARIABLE: Final = "NOVACHRONO_MAIL_MAILBOX"
 DEFAULT_MAIL_PORT: Final = 993
 DEFAULT_MAIL_MAILBOX: Final = "INBOX"
 
+TEAMS_TENANT_ID_VARIABLE: Final = "NOVACHRONO_TEAMS_TENANT_ID"
+TEAMS_CLIENT_ID_VARIABLE: Final = "NOVACHRONO_TEAMS_CLIENT_ID"
+TEAMS_CLIENT_SECRET_VARIABLE: Final = "NOVACHRONO_TEAMS_CLIENT_SECRET"
+TEAMS_TEAM_ID_VARIABLE: Final = "NOVACHRONO_TEAMS_TEAM_ID"
+TEAMS_CHANNEL_ID_VARIABLE: Final = "NOVACHRONO_TEAMS_CHANNEL_ID"
+
 _TEMPERATURE_UNIT_ALIASES: Final = {
     "C": TemperatureUnit.CELSIUS,
     "CELSIUS": TemperatureUnit.CELSIUS,
@@ -72,6 +78,17 @@ class MailSettings:
 
 
 @dataclass(frozen=True)
+class TeamsSettings:
+    """Configured Microsoft Teams (Graph API) connection values."""
+
+    tenant_id: str | None
+    client_id: str | None
+    client_secret: str | None
+    team_id: str | None
+    channel_id: str | None
+
+
+@dataclass(frozen=True)
 class AppConfig:
     """Runtime configuration for Novachrono."""
 
@@ -81,6 +98,7 @@ class AppConfig:
     weather: WeatherSettings
     times_gate: TimesGateSettings
     mail: MailSettings
+    teams: TeamsSettings
 
 
 def load_config(env_file: Path | None = None) -> AppConfig:
@@ -114,6 +132,8 @@ def load_config(env_file: Path | None = None) -> AppConfig:
 
     mail = _read_mail_settings(values)
 
+    teams = _read_teams_settings(values)
+
     return AppConfig(
         timezone=timezone,
         locale=locale,
@@ -121,6 +141,7 @@ def load_config(env_file: Path | None = None) -> AppConfig:
         weather=weather,
         times_gate=times_gate,
         mail=mail,
+        teams=teams,
     )
 
 
@@ -198,6 +219,45 @@ def validate_mail_settings(
         username=username,
         password=password,
         mailbox=mailbox,
+    )
+
+
+def _read_teams_settings(values: Mapping[str, str | None]) -> TeamsSettings:
+    return validate_teams_settings(
+        tenant_id=_read_optional_value(values, TEAMS_TENANT_ID_VARIABLE),
+        client_id=_read_optional_value(values, TEAMS_CLIENT_ID_VARIABLE),
+        client_secret=_read_optional_value(values, TEAMS_CLIENT_SECRET_VARIABLE),
+        team_id=_read_optional_value(values, TEAMS_TEAM_ID_VARIABLE),
+        channel_id=_read_optional_value(values, TEAMS_CHANNEL_ID_VARIABLE),
+    )
+
+
+def validate_teams_settings(
+    *,
+    tenant_id: str | None,
+    client_id: str | None,
+    client_secret: str | None,
+    team_id: str | None,
+    channel_id: str | None,
+) -> TeamsSettings:
+    """Validate Microsoft Teams settings and return normalized settings."""
+
+    configured_values = (tenant_id, client_id, client_secret, team_id, channel_id)
+
+    if any(value is not None for value in configured_values) and not all(
+        value is not None for value in configured_values
+    ):
+        raise ConfigError(
+            "Teams tenant ID, client ID, client secret, team ID, and channel ID "
+            "must be configured together"
+        )
+
+    return TeamsSettings(
+        tenant_id=tenant_id,
+        client_id=client_id,
+        client_secret=client_secret,
+        team_id=team_id,
+        channel_id=channel_id,
     )
 
 

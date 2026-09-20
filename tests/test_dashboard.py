@@ -9,6 +9,7 @@ from novachrono.dashboard import (
     CLOCK_PANEL_INDEX,
     MAIL_PANEL_INDEX,
     POKEMON_GO_PANEL_INDEX,
+    TEAMS_PANEL_INDEX,
     WEATHER_PANEL_INDEX,
     render_dashboard,
     render_panel,
@@ -16,10 +17,9 @@ from novachrono.dashboard import (
 from novachrono.design import PANEL_COUNT, PANEL_SIZE
 from novachrono.mail import MailSummary
 from novachrono.pokemon_go import RaidRoster
+from novachrono.teams import TeamsSummary
 from novachrono.units import TemperatureUnit
 from novachrono.weather import CurrentWeather
-
-PLACEHOLDER_PANEL_INDEX = 4
 
 BERLIN = ZoneInfo("Europe/Berlin")
 
@@ -38,18 +38,21 @@ def test_current_widgets_have_expected_positions() -> None:
     assert WEATHER_PANEL_INDEX == 1
     assert CLOCK_PANEL_INDEX == 2
     assert POKEMON_GO_PANEL_INDEX == 3
+    assert TEAMS_PANEL_INDEX == 4
 
 
 def test_render_dashboard_returns_expected_panels(
     mail: MailSummary,
     weather: CurrentWeather,
     raid_roster: RaidRoster,
+    teams: TeamsSummary,
 ) -> None:
     panels = render_dashboard(
         FIXED_TIME,
         mail=mail,
         weather=weather,
         raid_roster=raid_roster,
+        teams=teams,
     )
 
     assert isinstance(panels, tuple)
@@ -88,12 +91,14 @@ def test_render_panel_rejects_invalid_index(
         WEATHER_PANEL_INDEX,
         CLOCK_PANEL_INDEX,
         POKEMON_GO_PANEL_INDEX,
+        TEAMS_PANEL_INDEX,
     ],
 )
 def test_dashboard_renders_widgets_on_configured_panels(
     mail: MailSummary,
     weather: CurrentWeather,
     raid_roster: RaidRoster,
+    teams: TeamsSummary,
     panel_index: int,
 ) -> None:
     panels = render_dashboard(
@@ -101,15 +106,17 @@ def test_dashboard_renders_widgets_on_configured_panels(
         mail=mail,
         weather=weather,
         raid_roster=raid_roster,
+        teams=teams,
     )
 
-    assert panels[panel_index].tobytes() != panels[PLACEHOLDER_PANEL_INDEX].tobytes()
+    assert panels[panel_index].tobytes() != render_panel(panel_index).tobytes()
 
 
 def test_dashboard_passes_artwork_to_pokemon_renderer(
     mail: MailSummary,
     weather: CurrentWeather,
     raid_roster: RaidRoster,
+    teams: TeamsSummary,
 ) -> None:
     raid_artwork = {
         "https://example.com/artwork.png": Image.new(
@@ -129,6 +136,7 @@ def test_dashboard_passes_artwork_to_pokemon_renderer(
             mail=mail,
             weather=weather,
             raid_roster=raid_roster,
+            teams=teams,
             raid_artwork=raid_artwork,
         )
 
@@ -142,12 +150,14 @@ def test_dashboard_is_deterministic_for_given_input(
     mail: MailSummary,
     weather: CurrentWeather,
     raid_roster: RaidRoster,
+    teams: TeamsSummary,
 ) -> None:
     first_dashboard = render_dashboard(
         FIXED_TIME,
         mail=mail,
         weather=weather,
         raid_roster=raid_roster,
+        teams=teams,
     )
 
     second_dashboard = render_dashboard(
@@ -155,6 +165,7 @@ def test_dashboard_is_deterministic_for_given_input(
         mail=mail,
         weather=weather,
         raid_roster=raid_roster,
+        teams=teams,
     )
 
     for first_panel, second_panel in zip(
@@ -169,12 +180,14 @@ def test_temperature_unit_changes_only_weather_panel(
     mail: MailSummary,
     weather: CurrentWeather,
     raid_roster: RaidRoster,
+    teams: TeamsSummary,
 ) -> None:
     celsius_dashboard = render_dashboard(
         FIXED_TIME,
         mail=mail,
         weather=weather,
         raid_roster=raid_roster,
+        teams=teams,
         temperature_unit=TemperatureUnit.CELSIUS,
     )
 
@@ -183,6 +196,7 @@ def test_temperature_unit_changes_only_weather_panel(
         mail=mail,
         weather=weather,
         raid_roster=raid_roster,
+        teams=teams,
         temperature_unit=TemperatureUnit.FAHRENHEIT,
     )
 
@@ -206,17 +220,24 @@ def test_temperature_unit_changes_only_weather_panel(
         == fahrenheit_dashboard[POKEMON_GO_PANEL_INDEX].tobytes()
     )
 
+    assert (
+        celsius_dashboard[TEAMS_PANEL_INDEX].tobytes()
+        == fahrenheit_dashboard[TEAMS_PANEL_INDEX].tobytes()
+    )
+
 
 def test_locale_changes_weather_and_mail_panels(
     mail: MailSummary,
     weather: CurrentWeather,
     raid_roster: RaidRoster,
+    teams: TeamsSummary,
 ) -> None:
     german_dashboard = render_dashboard(
         FIXED_TIME,
         mail=mail,
         weather=weather,
         raid_roster=raid_roster,
+        teams=teams,
         locale="de_DE",
     )
 
@@ -225,6 +246,7 @@ def test_locale_changes_weather_and_mail_panels(
         mail=mail,
         weather=weather,
         raid_roster=raid_roster,
+        teams=teams,
         locale="en_US",
     )
 
@@ -248,10 +270,16 @@ def test_locale_changes_weather_and_mail_panels(
         == english_dashboard[POKEMON_GO_PANEL_INDEX].tobytes()
     )
 
+    assert (
+        german_dashboard[TEAMS_PANEL_INDEX].tobytes()
+        == english_dashboard[TEAMS_PANEL_INDEX].tobytes()
+    )
+
 
 def test_mail_changes_only_mail_panel(
     weather: CurrentWeather,
     raid_roster: RaidRoster,
+    teams: TeamsSummary,
 ) -> None:
     unread_dashboard = render_dashboard(
         FIXED_TIME,
@@ -262,6 +290,7 @@ def test_mail_changes_only_mail_panel(
         ),
         weather=weather,
         raid_roster=raid_roster,
+        teams=teams,
     )
 
     no_mail_dashboard = render_dashboard(
@@ -269,6 +298,7 @@ def test_mail_changes_only_mail_panel(
         mail=MailSummary(unread_count=0),
         weather=weather,
         raid_roster=raid_roster,
+        teams=teams,
     )
 
     assert (
@@ -289,4 +319,59 @@ def test_mail_changes_only_mail_panel(
     assert (
         unread_dashboard[POKEMON_GO_PANEL_INDEX].tobytes()
         == no_mail_dashboard[POKEMON_GO_PANEL_INDEX].tobytes()
+    )
+
+    assert (
+        unread_dashboard[TEAMS_PANEL_INDEX].tobytes()
+        == no_mail_dashboard[TEAMS_PANEL_INDEX].tobytes()
+    )
+
+
+def test_teams_changes_only_teams_panel(
+    mail: MailSummary,
+    weather: CurrentWeather,
+    raid_roster: RaidRoster,
+) -> None:
+    active_dashboard = render_dashboard(
+        FIXED_TIME,
+        mail=mail,
+        weather=weather,
+        raid_roster=raid_roster,
+        teams=TeamsSummary(
+            latest_sender="Alice",
+            latest_message_preview="Hello",
+        ),
+    )
+
+    no_activity_dashboard = render_dashboard(
+        FIXED_TIME,
+        mail=mail,
+        weather=weather,
+        raid_roster=raid_roster,
+        teams=TeamsSummary(),
+    )
+
+    assert (
+        active_dashboard[TEAMS_PANEL_INDEX].tobytes()
+        != no_activity_dashboard[TEAMS_PANEL_INDEX].tobytes()
+    )
+
+    assert (
+        active_dashboard[MAIL_PANEL_INDEX].tobytes()
+        == no_activity_dashboard[MAIL_PANEL_INDEX].tobytes()
+    )
+
+    assert (
+        active_dashboard[WEATHER_PANEL_INDEX].tobytes()
+        == no_activity_dashboard[WEATHER_PANEL_INDEX].tobytes()
+    )
+
+    assert (
+        active_dashboard[CLOCK_PANEL_INDEX].tobytes()
+        == no_activity_dashboard[CLOCK_PANEL_INDEX].tobytes()
+    )
+
+    assert (
+        active_dashboard[POKEMON_GO_PANEL_INDEX].tobytes()
+        == no_activity_dashboard[POKEMON_GO_PANEL_INDEX].tobytes()
     )
