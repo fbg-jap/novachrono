@@ -13,6 +13,11 @@ CONFIG_ENVIRONMENT_VARIABLES = (
     "NOVACHRONO_WEATHER_LONGITUDE",
     "NOVACHRONO_TIMES_GATE_HOST",
     "NOVACHRONO_TIMES_GATE_TOKEN",
+    "NOVACHRONO_MAIL_HOST",
+    "NOVACHRONO_MAIL_PORT",
+    "NOVACHRONO_MAIL_USERNAME",
+    "NOVACHRONO_MAIL_PASSWORD",
+    "NOVACHRONO_MAIL_MAILBOX",
 )
 
 
@@ -37,6 +42,12 @@ def test_load_config_uses_defaults(tmp_path: Path) -> None:
     assert config.times_gate.host is None
     assert config.times_gate.local_token is None
 
+    assert config.mail.host is None
+    assert config.mail.port == 993
+    assert config.mail.username is None
+    assert config.mail.password is None
+    assert config.mail.mailbox == "INBOX"
+
 
 def test_load_config_reads_dotenv(tmp_path: Path) -> None:
     env_file = tmp_path / ".env"
@@ -50,6 +61,11 @@ def test_load_config_reads_dotenv(tmp_path: Path) -> None:
         "NOVACHRONO_WEATHER_LONGITUDE=8.80169",
         "NOVACHRONO_TIMES_GATE_HOST=192.168.178.50",
         "NOVACHRONO_TIMES_GATE_TOKEN=secret",
+        "NOVACHRONO_MAIL_HOST=imap.example.com",
+        "NOVACHRONO_MAIL_PORT=143",
+        "NOVACHRONO_MAIL_USERNAME=user@example.com",
+        "NOVACHRONO_MAIL_PASSWORD=mail-secret",
+        "NOVACHRONO_MAIL_MAILBOX=Archive",
     )
 
     config = load_config(env_file)
@@ -63,6 +79,12 @@ def test_load_config_reads_dotenv(tmp_path: Path) -> None:
 
     assert config.times_gate.host == "192.168.178.50"
     assert config.times_gate.local_token == "secret"
+
+    assert config.mail.host == "imap.example.com"
+    assert config.mail.port == 143
+    assert config.mail.username == "user@example.com"
+    assert config.mail.password == "mail-secret"
+    assert config.mail.mailbox == "Archive"
 
 
 def test_environment_overrides_dotenv(
@@ -347,6 +369,92 @@ def test_invalid_temperature_unit_raises_config_error(
         match="Unsupported temperature unit",
     ):
         load_config(env_file)
+
+
+@pytest.mark.parametrize(
+    "configured_variable",
+    [
+        "NOVACHRONO_MAIL_HOST=imap.example.com",
+        "NOVACHRONO_MAIL_USERNAME=user@example.com",
+        "NOVACHRONO_MAIL_PASSWORD=secret",
+    ],
+)
+def test_mail_settings_must_be_configured_together(
+    configured_variable: str,
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / ".env"
+    _write_env(env_file, configured_variable)
+
+    with pytest.raises(
+        ConfigError,
+        match="Mail host, username, and password must be configured together",
+    ):
+        load_config(env_file)
+
+
+@pytest.mark.parametrize(
+    "port",
+    [
+        "0",
+        "65536",
+        "-1",
+    ],
+)
+def test_mail_port_rejects_out_of_range_values(
+    port: str,
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / ".env"
+
+    _write_env(
+        env_file,
+        f"NOVACHRONO_MAIL_PORT={port}",
+    )
+
+    with pytest.raises(
+        ConfigError,
+        match="Mail port must be between",
+    ):
+        load_config(env_file)
+
+
+def test_invalid_mail_port_raises_config_error(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / ".env"
+
+    _write_env(
+        env_file,
+        "NOVACHRONO_MAIL_PORT=not-a-number",
+    )
+
+    with pytest.raises(
+        ConfigError,
+        match="Invalid numeric value",
+    ):
+        load_config(env_file)
+
+
+def test_blank_mail_values_use_defaults(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+
+    _write_env(
+        env_file,
+        "NOVACHRONO_MAIL_HOST=",
+        "NOVACHRONO_MAIL_USERNAME=",
+        "NOVACHRONO_MAIL_PASSWORD=",
+        "NOVACHRONO_MAIL_PORT=",
+        "NOVACHRONO_MAIL_MAILBOX=",
+    )
+
+    config = load_config(env_file)
+
+    assert config.mail.host is None
+    assert config.mail.username is None
+    assert config.mail.password is None
+    assert config.mail.port == 993
+    assert config.mail.mailbox == "INBOX"
 
 
 def _write_env(

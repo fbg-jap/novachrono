@@ -12,6 +12,7 @@ The following functionality is currently available:
 
 - rendering of five 128 × 128 pixel panels
 - shared custom HUD-style visual design
+- unread-mail notifications widget using IMAP
 - current weather widget using live Open-Meteo data
 - animated rain and fog weather states
 - Celsius and Fahrenheit display support
@@ -26,6 +27,7 @@ The following functionality is currently available:
 - complete five-display dashboard upload
 - local Times Gate connection check
 - `.env`-based configuration
+- local web GUI for editing configuration
 - command-line interface powered by Typer
 - automated tests with pytest
 - formatting and linting with Ruff
@@ -33,7 +35,7 @@ The following functionality is currently available:
 
 The current display assignment is:
 
-1. **Placeholder**
+1. **Mail notifications**
 2. **Current weather**
 3. **Clock and date**
 4. **Pokémon GO raids**
@@ -108,10 +110,12 @@ src/novachrono/
 ├── config.py
 ├── dashboard.py
 ├── i18n.py
+├── mail.py
 ├── pokemon_go.py
 ├── preview.py
 ├── units.py
 ├── weather.py
+├── webconfig.py
 ├── design/
 │   ├── __init__.py
 │   ├── components.py
@@ -121,6 +125,7 @@ src/novachrono/
 │   └── times_gate.py
 ├── sources/
 │   ├── __init__.py
+│   ├── imap_mail.py
 │   ├── open_meteo.py
 │   ├── pokeapi.py
 │   ├── pokemon_artwork.py
@@ -128,6 +133,9 @@ src/novachrono/
 └── widgets/
     ├── __init__.py
     ├── clock.py
+    ├── mail/
+    │   ├── __init__.py
+    │   └── notifications.py
     ├── pokemon_go/
     │   ├── __init__.py
     │   └── raid_bosses.py
@@ -173,6 +181,7 @@ Widgets do not:
 
 Current widgets:
 
+- mail notifications
 - current weather
 - clock and date
 - Pokémon GO raids
@@ -182,6 +191,21 @@ Planned widgets include:
 - GitHub status
 - calendar information
 - system status
+
+### Mail Data
+
+Unread-mail notifications are retrieved directly from a mail account over IMAP, using the standard library `imaplib`.
+
+Novachrono retrieves:
+
+- the number of unread messages in a configured mailbox
+- the sender and subject of the most recently received unread message
+
+The mailbox is opened read-only and messages are fetched with `BODY.PEEK`, so checking for unread mail never marks messages as read.
+
+Mail is entirely optional. If host, username, or password are not configured, the mail widget renders a "no new mail" state without attempting a network connection.
+
+If mail is configured but temporarily unreachable, `preview` and `send-dashboard` fall back to that same state instead of failing outright; `send-mail` reports the error directly, since it was asked for mail specifically.
 
 ### Weather Data
 
@@ -247,7 +271,7 @@ The dashboard renderer creates a static five-panel snapshot and assigns widgets 
 Current assignments:
 
 ```text
-Panel index 0 -> placeholder
+Panel index 0 -> mail
 Panel index 1 -> weather
 Panel index 2 -> clock
 Panel index 3 -> pokemon_go
@@ -268,6 +292,14 @@ Animation delivery is handled separately by the CLI and Times Gate output adapte
 Process environment variables override values from `.env`.
 
 Configuration is normalized into an immutable `AppConfig` before it is used by the application.
+
+### Configuration GUI
+
+`webconfig.py` provides a small local web GUI for editing the `.env` file.
+
+It binds to `127.0.0.1` by default so the configuration, including the Times Gate token, is not exposed to the local network.
+
+The GUI reuses the same validation rules as `config.py` and shows inline errors instead of writing an invalid `.env` file.
 
 ### Internationalization
 
@@ -340,10 +372,12 @@ The CLI is implemented with Typer.
 Current commands:
 
 ```text
+configure
 preview
 check-device
 send-clock
 send-weather
+send-mail
 send-pokemon
 send-dashboard
 ```
@@ -406,6 +440,12 @@ NOVACHRONO_TEMPERATURE_UNIT=C
 
 NOVACHRONO_WEATHER_LATITUDE=53.04771
 NOVACHRONO_WEATHER_LONGITUDE=8.80169
+
+NOVACHRONO_MAIL_HOST=
+NOVACHRONO_MAIL_PORT=993
+NOVACHRONO_MAIL_USERNAME=
+NOVACHRONO_MAIL_PASSWORD=
+NOVACHRONO_MAIL_MAILBOX=INBOX
 
 NOVACHRONO_TIMES_GATE_HOST=192.168.1.100
 NOVACHRONO_TIMES_GATE_TOKEN=replace-me
@@ -484,6 +524,34 @@ latitude  -> -90 to 90
 longitude -> -180 to 180
 ```
 
+### Mail Notifications
+
+The mail widget connects to a mailbox over IMAP to show the unread-message count and the latest unread message's sender and subject.
+
+```text
+NOVACHRONO_MAIL_HOST
+NOVACHRONO_MAIL_PORT
+NOVACHRONO_MAIL_USERNAME
+NOVACHRONO_MAIL_PASSWORD
+NOVACHRONO_MAIL_MAILBOX
+```
+
+Host, username, and password must either all be configured or all be omitted. Leaving them empty disables the widget without an error.
+
+Default port:
+
+```text
+993
+```
+
+Default mailbox:
+
+```text
+INBOX
+```
+
+Most providers require an app-specific password rather than your regular account password for IMAP access. Do not commit a real mail password.
+
 ### Times Gate Host
 
 The host must contain only the local IP address or hostname.
@@ -542,6 +610,30 @@ Using `--token` regularly is discouraged because command-line arguments may be s
 ```shell
 uv run novachrono --help
 ```
+
+### Edit Configuration in a Browser
+
+```shell
+uv run novachrono configure
+```
+
+This starts a local web server on `http://127.0.0.1:8765/` and opens it in your default browser.
+
+The form is pre-filled with the current `.env` values and writes changes back to the same file after validating them.
+
+Use `--port` to choose another port, and `--no-open-browser` to skip opening a browser automatically:
+
+```shell
+uv run novachrono configure --port 9000 --no-open-browser
+```
+
+`--host` can bind to a different interface, but this is discouraged because it can expose your configuration, including the Times Gate token, to other devices on the network:
+
+```shell
+uv run novachrono configure --host 0.0.0.0
+```
+
+Stop the server with `Ctrl+C`.
 
 ### Generate a Local Dashboard Preview
 
@@ -610,6 +702,18 @@ Fog uses a native ten-frame animation.
 
 Other weather conditions currently use a static image.
 
+### Send the Mail Widget
+
+```shell
+uv run novachrono send-mail
+```
+
+The mail widget is assigned to physical display 1.
+
+Unread-mail data is retrieved live over IMAP using the configured account.
+
+Unlike `preview` and `send-dashboard`, this command requires mail to be configured and reports an error if the mailbox cannot be reached.
+
 ### Send the Pokémon GO Widget
 
 ```shell
@@ -642,7 +746,9 @@ Currently this means:
 - rain is animated
 - fog is animated
 - Pokémon GO raids are animated when multiple bosses are active
-- placeholders and all other weather states are static
+- the mail widget, placeholders, and all other weather states are static
+
+If mail is configured but cannot be reached, the mail panel falls back to a "no new mail" state instead of failing the whole dashboard; a warning is printed to explain why.
 
 If one or more displays fail, Novachrono continues attempting the remaining displays and reports the affected display numbers afterward.
 
@@ -736,6 +842,8 @@ The test suite covers:
 - negative and three-digit temperatures
 - internationalization
 - dashboard composition
+- mail rendering and unread-state handling
+- IMAP request, response, and header-decoding handling
 - weather rendering and animation
 - Open-Meteo request, response, and weather-code handling
 - ScrapedDuck raid parsing
@@ -759,6 +867,7 @@ Never commit:
 
 - Divoom local tokens
 - GitHub personal access tokens
+- IMAP mail passwords
 - private calendar feed URLs
 - credentials
 - `.env`
@@ -783,6 +892,7 @@ Potential security issues should be reported according to the [Security Policy](
 - [x] add automated formatting, linting, testing, and security checks
 - [x] add a Typer-based CLI
 - [x] add `.env`-based configuration
+- [x] add a local web GUI for editing configuration
 - [x] add basic internationalization
 - [x] add configurable Celsius and Fahrenheit rendering
 
@@ -809,6 +919,16 @@ Potential security issues should be reported according to the [Security Policy](
 - [x] remove demo weather data
 - [x] animate rain
 - [x] animate fog
+
+### Mail Notifications Widget
+
+- [x] research a reliable, credential-light mail data source
+- [x] retrieve the unread-mail count over IMAP
+- [x] retrieve the latest unread message's sender and subject
+- [x] render the mail notifications widget
+- [x] place mail notifications on display 1
+- [x] support disabling the widget when mail is not configured
+- [x] treat mail as best-effort for the combined dashboard
 
 ### Times Gate Integration
 

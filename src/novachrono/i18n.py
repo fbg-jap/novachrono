@@ -10,9 +10,11 @@ SUPPORTED_LOCALES: Final = (
 _TRANSLATIONS: Final = {
     "de_DE": {
         "weather.title": "WETTER",
+        "mail.title": "E-MAIL",
     },
     "en_US": {
         "weather.title": "WEATHER",
+        "mail.title": "MAIL",
     },
 }
 

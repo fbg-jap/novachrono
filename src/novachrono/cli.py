@@ -7,6 +7,9 @@ import typer
 from PIL import Image
 
 from novachrono.config import (
+    MAIL_HOST_VARIABLE,
+    MAIL_PASSWORD_VARIABLE,
+    MAIL_USERNAME_VARIABLE,
     TIMES_GATE_HOST_VARIABLE,
     TIMES_GATE_TOKEN_VARIABLE,
     WEATHER_LATITUDE_VARIABLE,
@@ -17,10 +20,12 @@ from novachrono.config import (
 )
 from novachrono.dashboard import (
     CLOCK_PANEL_INDEX,
+    MAIL_PANEL_INDEX,
     POKEMON_GO_PANEL_INDEX,
     WEATHER_PANEL_INDEX,
     render_dashboard,
 )
+from novachrono.mail import MailSummary
 from novachrono.outputs.times_gate import (
     TimesGateClient,
     TimesGateConfig,
@@ -28,6 +33,7 @@ from novachrono.outputs.times_gate import (
 )
 from novachrono.pokemon_go import RaidRoster
 from novachrono.preview import create_preview, save_preview
+from novachrono.sources.imap_mail import MailError, fetch_mail_summary
 from novachrono.sources.open_meteo import (
     OpenMeteoError,
     fetch_current_weather,
@@ -39,7 +45,13 @@ from novachrono.sources.scraped_duck import (
     fetch_raid_roster,
 )
 from novachrono.weather import CurrentWeather, WeatherCondition
+from novachrono.webconfig import (
+    DEFAULT_CONFIG_SERVER_HOST,
+    DEFAULT_CONFIG_SERVER_PORT,
+    run_config_server,
+)
 from novachrono.widgets.clock import render_clock_animation
+from novachrono.widgets.mail import render_mail_panel
 from novachrono.widgets.pokemon_go import render_raid_animation
 from novachrono.widgets.weather import render_weather_animation
 
@@ -75,6 +87,49 @@ TokenOption = Annotated[
 
 
 @app.command()
+def configure(
+    host: Annotated[
+        str,
+        typer.Option(
+            "--host",
+            help="Interface to bind the local configuration server to.",
+            metavar="HOST",
+        ),
+    ] = DEFAULT_CONFIG_SERVER_HOST,
+    port: Annotated[
+        int,
+        typer.Option(
+            "--port",
+            help="Port for the local configuration server.",
+        ),
+    ] = DEFAULT_CONFIG_SERVER_PORT,
+    open_browser: Annotated[
+        bool,
+        typer.Option(
+            "--open-browser/--no-open-browser",
+            help="Automatically open the configuration page in a browser.",
+        ),
+    ] = True,
+) -> None:
+    """Start a local web GUI for editing the .env configuration."""
+
+    if host != DEFAULT_CONFIG_SERVER_HOST:
+        typer.echo(
+            f"Warning: binding to {host} may expose your configuration, "
+            "including the Times Gate token, to other devices on the network.",
+            err=True,
+        )
+
+    typer.echo(f"Serving configuration at http://{host}:{port}/ (press Ctrl+C to stop) ...")
+
+    run_config_server(
+        host=host,
+        port=port,
+        open_browser=open_browser,
+    )
+
+
+@app.command()
 def preview(
     output: Annotated[
         Path,
@@ -90,11 +145,13 @@ def preview(
 
     config = _load_app_config()
 
+    mail = _load_mail_summary_best_effort(config)
     weather = _load_current_weather(config)
     raid_roster = _load_raid_roster(config)
     raid_artwork = fetch_raid_artwork(raid_roster)
 
     panels = render_dashboard(
+        mail=mail,
         weather=weather,
         raid_roster=raid_roster,
         raid_artwork=raid_artwork,
@@ -204,6 +261,37 @@ def send_weather(
     )
 
 
+@app.command(name="send-mail")
+def send_mail(
+    host: HostOption = None,
+    token: TokenOption = None,
+) -> None:
+    """Retrieve and send the mail notifications panel."""
+
+    app_config = _load_app_config()
+
+    client = _create_times_gate_client(
+        app_config=app_config,
+        host=host,
+        local_token=token,
+    )
+
+    mail = _load_mail_summary(app_config)
+
+    frame = render_mail_panel(
+        mail,
+        locale=app_config.locale,
+    )
+
+    _send_widget_frames(
+        client=client,
+        panel_index=MAIL_PANEL_INDEX,
+        frames=(frame,),
+        frame_duration_ms=None,
+        name="Mail",
+    )
+
+
 @app.command(name="send-pokemon")
 def send_pokemon(
     host: HostOption = None,
@@ -251,11 +339,13 @@ def send_dashboard(
         local_token=token,
     )
 
+    mail = _load_mail_summary_best_effort(app_config)
     weather = _load_current_weather(app_config)
     raid_roster = _load_raid_roster(app_config)
     raid_artwork = fetch_raid_artwork(raid_roster)
 
     panels = render_dashboard(
+        mail=mail,
         weather=weather,
         raid_roster=raid_roster,
         raid_artwork=raid_artwork,
@@ -441,6 +531,63 @@ def _load_current_weather(
         )
     except OpenMeteoError as error:
         _exit_with_error(str(error))
+
+
+def _load_mail_summary(
+    app_config: AppConfig,
+) -> MailSummary:
+    """Load the mail summary, exiting with an error if mail is not usable."""
+
+    if not _mail_settings_configured(app_config):
+        missing_variables = ", ".join(
+            (
+                MAIL_HOST_VARIABLE,
+                MAIL_USERNAME_VARIABLE,
+                MAIL_PASSWORD_VARIABLE,
+            )
+        )
+
+        _exit_with_error(f"Missing required mail configuration: {missing_variables}")
+
+    try:
+        return _fetch_configured_mail_summary(app_config)
+    except MailError as error:
+        _exit_with_error(str(error))
+
+
+def _load_mail_summary_best_effort(
+    app_config: AppConfig,
+) -> MailSummary:
+    """Load the mail summary without failing the whole dashboard on error."""
+
+    if not _mail_settings_configured(app_config):
+        return MailSummary(unread_count=0)
+
+    try:
+        return _fetch_configured_mail_summary(app_config)
+    except MailError as error:
+        typer.echo(f"Warning: could not retrieve mail: {error}", err=True)
+        return MailSummary(unread_count=0)
+
+
+def _mail_settings_configured(
+    app_config: AppConfig,
+) -> bool:
+    mail = app_config.mail
+
+    return mail.host is not None and mail.username is not None and mail.password is not None
+
+
+def _fetch_configured_mail_summary(
+    app_config: AppConfig,
+) -> MailSummary:
+    return fetch_mail_summary(
+        host=app_config.mail.host,
+        port=app_config.mail.port,
+        username=app_config.mail.username,
+        password=app_config.mail.password,
+        mailbox=app_config.mail.mailbox,
+    )
 
 
 def _load_raid_roster(

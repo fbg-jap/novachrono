@@ -10,21 +10,26 @@ from typer.testing import CliRunner
 from novachrono.cli import app
 from novachrono.config import (
     AppConfig,
+    MailSettings,
     TimesGateSettings,
     WeatherSettings,
 )
 from novachrono.dashboard import (
     CLOCK_PANEL_INDEX,
+    MAIL_PANEL_INDEX,
     POKEMON_GO_PANEL_INDEX,
     WEATHER_PANEL_INDEX,
 )
 from novachrono.design import PANEL_COUNT, PANEL_SIZE
+from novachrono.mail import MailSummary
 from novachrono.outputs.times_gate import TimesGateError
 from novachrono.pokemon_go import RaidBoss, RaidRoster
+from novachrono.sources.imap_mail import MailError
 from novachrono.sources.open_meteo import OpenMeteoError
 from novachrono.sources.scraped_duck import ScrapedDuckError
 from novachrono.units import TemperatureUnit
 from novachrono.weather import CurrentWeather, WeatherCondition
+from novachrono.webconfig import DEFAULT_CONFIG_SERVER_HOST, DEFAULT_CONFIG_SERVER_PORT
 
 runner = CliRunner()
 
@@ -56,12 +61,60 @@ def test_help_lists_available_commands() -> None:
     )
 
     assert result.exit_code == 0
+    assert "configure" in result.stdout
     assert "preview" in result.stdout
     assert "check-device" in result.stdout
     assert "send-clock" in result.stdout
     assert "send-weather" in result.stdout
+    assert "send-mail" in result.stdout
     assert "send-pokemon" in result.stdout
     assert "send-dashboard" in result.stdout
+
+
+@patch("novachrono.cli.run_config_server")
+def test_configure_command_starts_server(
+    mocked_run_server: MagicMock,
+) -> None:
+    result = runner.invoke(app, ["configure"])
+
+    assert result.exit_code == 0
+
+    mocked_run_server.assert_called_once_with(
+        host=DEFAULT_CONFIG_SERVER_HOST,
+        port=DEFAULT_CONFIG_SERVER_PORT,
+        open_browser=True,
+    )
+
+
+@patch("novachrono.cli.run_config_server")
+def test_configure_command_warns_when_host_overridden(
+    mocked_run_server: MagicMock,
+) -> None:
+    result = runner.invoke(app, ["configure", "--host", "0.0.0.0"])
+
+    assert result.exit_code == 0
+    assert "may expose your configuration" in result.stderr
+
+    mocked_run_server.assert_called_once_with(
+        host="0.0.0.0",
+        port=DEFAULT_CONFIG_SERVER_PORT,
+        open_browser=True,
+    )
+
+
+@patch("novachrono.cli.run_config_server")
+def test_configure_command_supports_disabling_browser(
+    mocked_run_server: MagicMock,
+) -> None:
+    result = runner.invoke(app, ["configure", "--no-open-browser"])
+
+    assert result.exit_code == 0
+
+    mocked_run_server.assert_called_once_with(
+        host=DEFAULT_CONFIG_SERVER_HOST,
+        port=DEFAULT_CONFIG_SERVER_PORT,
+        open_browser=False,
+    )
 
 
 @patch("novachrono.cli.fetch_raid_artwork")
@@ -146,6 +199,7 @@ def test_preview_passes_external_data_to_dashboard(
     assert result.exit_code == 0
 
     mocked_render_dashboard.assert_called_once_with(
+        mail=MailSummary(unread_count=0),
         weather=weather,
         raid_roster=raid_roster,
         raid_artwork=artwork,
@@ -387,6 +441,124 @@ def test_send_weather_uses_animation_for_animated_conditions(
     assert arguments["frame_duration_ms"] == expected_duration_ms
 
 
+@patch("novachrono.cli.TimesGateClient")
+@patch("novachrono.cli.load_config")
+def test_send_mail_reports_missing_mail_configuration(
+    mocked_load_config: MagicMock,
+    mocked_client_class: MagicMock,
+) -> None:
+    mocked_load_config.return_value = _create_app_config()
+
+    result = runner.invoke(
+        app,
+        ["send-mail"],
+    )
+
+    assert result.exit_code == 1
+    assert "NOVACHRONO_MAIL_HOST" in result.stderr
+    assert "NOVACHRONO_MAIL_USERNAME" in result.stderr
+    assert "NOVACHRONO_MAIL_PASSWORD" in result.stderr
+
+    mocked_client_class.return_value.send_image.assert_not_called()
+
+
+@patch("novachrono.cli.fetch_mail_summary")
+@patch("novachrono.cli.TimesGateClient")
+@patch("novachrono.cli.load_config")
+def test_send_mail_targets_mail_display(
+    mocked_load_config: MagicMock,
+    mocked_client_class: MagicMock,
+    mocked_fetch_mail: MagicMock,
+    mail: MailSummary,
+) -> None:
+    mocked_load_config.return_value = _create_app_config(
+        mail_host="mail.example.com",
+        mail_username="user",
+        mail_password="pw",
+    )
+    mocked_fetch_mail.return_value = mail
+
+    mocked_client = mocked_client_class.return_value
+    mocked_client.send_image.return_value = {
+        "ReturnCode": 0,
+    }
+
+    result = runner.invoke(
+        app,
+        ["send-mail"],
+    )
+
+    assert result.exit_code == 0
+
+    mocked_client.send_animation.assert_not_called()
+    assert mocked_client.send_image.call_args.kwargs["panel_index"] == MAIL_PANEL_INDEX
+
+
+@patch("novachrono.cli.fetch_mail_summary")
+@patch("novachrono.cli.TimesGateClient")
+@patch("novachrono.cli.load_config")
+def test_send_mail_reports_mail_error(
+    mocked_load_config: MagicMock,
+    mocked_client_class: MagicMock,
+    mocked_fetch_mail: MagicMock,
+) -> None:
+    mocked_load_config.return_value = _create_app_config(
+        mail_host="mail.example.com",
+        mail_username="user",
+        mail_password="pw",
+    )
+    mocked_fetch_mail.side_effect = MailError("Mail service unavailable")
+
+    result = runner.invoke(
+        app,
+        ["send-mail"],
+    )
+
+    assert result.exit_code == 1
+    assert "Mail service unavailable" in result.stderr
+
+
+@patch("novachrono.cli.fetch_mail_summary")
+@patch("novachrono.cli.fetch_raid_artwork")
+@patch("novachrono.cli._load_raid_roster")
+@patch("novachrono.cli._load_current_weather")
+@patch("novachrono.cli.load_config")
+def test_preview_treats_mail_errors_as_best_effort(
+    mocked_load_config: MagicMock,
+    mocked_load_weather: MagicMock,
+    mocked_load_raids: MagicMock,
+    mocked_fetch_artwork: MagicMock,
+    mocked_fetch_mail: MagicMock,
+    tmp_path: Path,
+    weather: CurrentWeather,
+    raid_roster: RaidRoster,
+) -> None:
+    mocked_load_config.return_value = _create_app_config(
+        mail_host="mail.example.com",
+        mail_username="user",
+        mail_password="pw",
+    )
+    mocked_load_weather.return_value = weather
+    mocked_load_raids.return_value = raid_roster
+    mocked_fetch_artwork.return_value = {}
+    mocked_fetch_mail.side_effect = MailError("Mail service unavailable")
+
+    destination = tmp_path / "preview.png"
+
+    result = runner.invoke(
+        app,
+        [
+            "preview",
+            "--output",
+            str(destination),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert destination.is_file()
+    assert "Warning: could not retrieve mail" in result.stderr
+
+
 @patch("novachrono.cli.fetch_raid_artwork")
 @patch("novachrono.cli._load_current_weather")
 @patch("novachrono.cli.TimesGateClient")
@@ -579,7 +751,7 @@ def test_send_dashboard_uses_clock_animation_and_static_other_panels(
     ]
 
     assert static_panel_indices == [
-        0,
+        MAIL_PANEL_INDEX,
         WEATHER_PANEL_INDEX,
         POKEMON_GO_PANEL_INDEX,
         4,
@@ -767,6 +939,9 @@ def _create_app_config(
     temperature_unit: TemperatureUnit = TemperatureUnit.CELSIUS,
     weather_latitude: float | None = 53.04771,
     weather_longitude: float | None = 8.80169,
+    mail_host: str | None = None,
+    mail_username: str | None = None,
+    mail_password: str | None = None,
 ) -> AppConfig:
     return AppConfig(
         timezone=ZoneInfo("Europe/Berlin"),
@@ -779,5 +954,12 @@ def _create_app_config(
         times_gate=TimesGateSettings(
             host=host,
             local_token=local_token,
+        ),
+        mail=MailSettings(
+            host=mail_host,
+            port=993,
+            username=mail_username,
+            password=mail_password,
+            mailbox="INBOX",
         ),
     )
