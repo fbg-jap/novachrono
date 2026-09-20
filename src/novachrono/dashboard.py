@@ -1,10 +1,10 @@
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from PIL import Image, ImageDraw
 
-from novachrono.config import DEFAULT_TIMEZONE_NAME
+from novachrono.config import DEFAULT_DISPLAY_ORDER, DEFAULT_TIMEZONE_NAME
 from novachrono.design import (
     FRAME_ACCENT_COLOR,
     PANEL_COUNT,
@@ -25,11 +25,21 @@ from novachrono.widgets.weather import render_weather_panel
 
 DEFAULT_TIMEZONE = ZoneInfo(DEFAULT_TIMEZONE_NAME)
 
-MAIL_PANEL_INDEX = 0
-WEATHER_PANEL_INDEX = 1
-CLOCK_PANEL_INDEX = 2
-POKEMON_GO_PANEL_INDEX = 3
-TEAMS_PANEL_INDEX = 4
+MAIL_PANEL_INDEX = DEFAULT_DISPLAY_ORDER.index("mail")
+WEATHER_PANEL_INDEX = DEFAULT_DISPLAY_ORDER.index("weather")
+CLOCK_PANEL_INDEX = DEFAULT_DISPLAY_ORDER.index("clock")
+POKEMON_GO_PANEL_INDEX = DEFAULT_DISPLAY_ORDER.index("pokemon_go")
+TEAMS_PANEL_INDEX = DEFAULT_DISPLAY_ORDER.index("teams")
+
+
+def panel_index_for(
+    widget_name: str,
+    *,
+    display_order: Sequence[str] = DEFAULT_DISPLAY_ORDER,
+) -> int:
+    """Return the physical panel index currently assigned to a widget."""
+
+    return tuple(display_order).index(widget_name)
 
 
 def render_panel(index: int) -> Image.Image:
@@ -60,31 +70,28 @@ def render_dashboard(
     timezone: ZoneInfo = DEFAULT_TIMEZONE,
     locale: str = DEFAULT_LOCALE,
     temperature_unit: TemperatureUnit = TemperatureUnit.CELSIUS,
+    display_order: Sequence[str] = DEFAULT_DISPLAY_ORDER,
 ) -> tuple[Image.Image, ...]:
-    """Render all Times Gate panels."""
+    """Render all Times Gate panels, arranged according to ``display_order``."""
 
     current_time = now if now is not None else datetime.now(timezone)
 
-    panels = [render_panel(index) for index in range(PANEL_COUNT)]
+    widget_panels = {
+        "mail": render_mail_panel(
+            mail,
+            locale=locale,
+        ),
+        "weather": render_weather_panel(
+            weather,
+            locale=locale,
+            temperature_unit=temperature_unit,
+        ),
+        "clock": render_clock_panel(current_time),
+        "pokemon_go": render_raid_panel(
+            raid_roster,
+            artwork_by_url=raid_artwork,
+        ),
+        "teams": render_teams_panel(teams),
+    }
 
-    panels[MAIL_PANEL_INDEX] = render_mail_panel(
-        mail,
-        locale=locale,
-    )
-
-    panels[WEATHER_PANEL_INDEX] = render_weather_panel(
-        weather,
-        locale=locale,
-        temperature_unit=temperature_unit,
-    )
-
-    panels[CLOCK_PANEL_INDEX] = render_clock_panel(current_time)
-
-    panels[POKEMON_GO_PANEL_INDEX] = render_raid_panel(
-        raid_roster,
-        artwork_by_url=raid_artwork,
-    )
-
-    panels[TEAMS_PANEL_INDEX] = render_teams_panel(teams)
-
-    return tuple(panels)
+    return tuple(widget_panels[name] for name in display_order)

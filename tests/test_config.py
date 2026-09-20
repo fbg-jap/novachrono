@@ -2,7 +2,13 @@ from pathlib import Path
 
 import pytest
 
-from novachrono.config import ConfigError, load_config
+from novachrono.config import (
+    DEFAULT_DISPLAY_ORDER,
+    WIDGET_NAMES,
+    ConfigError,
+    load_config,
+    validate_display_order,
+)
 from novachrono.units import TemperatureUnit
 
 CONFIG_ENVIRONMENT_VARIABLES = (
@@ -23,6 +29,7 @@ CONFIG_ENVIRONMENT_VARIABLES = (
     "NOVACHRONO_TEAMS_CLIENT_SECRET",
     "NOVACHRONO_TEAMS_TEAM_ID",
     "NOVACHRONO_TEAMS_CHANNEL_ID",
+    "NOVACHRONO_DISPLAY_ORDER",
 )
 
 
@@ -58,6 +65,8 @@ def test_load_config_uses_defaults(tmp_path: Path) -> None:
     assert config.teams.client_secret is None
     assert config.teams.team_id is None
     assert config.teams.channel_id is None
+
+    assert config.display_order == DEFAULT_DISPLAY_ORDER
 
 
 def test_load_config_reads_dotenv(tmp_path: Path) -> None:
@@ -522,6 +531,66 @@ def test_blank_teams_values_become_none(tmp_path: Path) -> None:
     assert config.teams.client_secret is None
     assert config.teams.team_id is None
     assert config.teams.channel_id is None
+
+
+def test_load_config_reads_custom_display_order(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+
+    _write_env(
+        env_file,
+        "NOVACHRONO_DISPLAY_ORDER=teams,pokemon_go,clock,weather,mail",
+    )
+
+    config = load_config(env_file)
+
+    assert config.display_order == (
+        "teams",
+        "pokemon_go",
+        "clock",
+        "weather",
+        "mail",
+    )
+
+
+def test_validate_display_order_accepts_a_permutation_of_widget_names() -> None:
+    shuffled = tuple(reversed(WIDGET_NAMES))
+
+    assert validate_display_order(shuffled) == shuffled
+
+
+@pytest.mark.parametrize(
+    "order",
+    [
+        ("mail", "weather", "clock", "pokemon_go"),
+        ("mail", "weather", "clock", "pokemon_go", "teams", "mail"),
+        ("mail", "mail", "clock", "pokemon_go", "teams"),
+        ("mail", "weather", "clock", "pokemon_go", "unknown_widget"),
+        (),
+    ],
+)
+def test_validate_display_order_rejects_invalid_permutations(
+    order: tuple[str, ...],
+) -> None:
+    with pytest.raises(
+        ConfigError,
+        match="Display order must contain each of",
+    ):
+        validate_display_order(order)
+
+
+def test_display_order_must_be_a_valid_permutation_in_dotenv(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+
+    _write_env(
+        env_file,
+        "NOVACHRONO_DISPLAY_ORDER=mail,weather,clock",
+    )
+
+    with pytest.raises(
+        ConfigError,
+        match="Display order must contain each of",
+    ):
+        load_config(env_file)
 
 
 def _write_env(

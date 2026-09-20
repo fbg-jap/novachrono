@@ -24,11 +24,7 @@ from novachrono.config import (
     load_config,
 )
 from novachrono.dashboard import (
-    CLOCK_PANEL_INDEX,
-    MAIL_PANEL_INDEX,
-    POKEMON_GO_PANEL_INDEX,
-    TEAMS_PANEL_INDEX,
-    WEATHER_PANEL_INDEX,
+    panel_index_for,
     render_dashboard,
 )
 from novachrono.mail import MailSummary
@@ -169,6 +165,7 @@ def preview(
         timezone=config.timezone,
         locale=config.locale,
         temperature_unit=config.temperature_unit,
+        display_order=config.display_order,
     )
 
     dashboard_preview = create_preview(panels)
@@ -233,7 +230,7 @@ def send_clock(
 
     _send_widget_frames(
         client=client,
-        panel_index=CLOCK_PANEL_INDEX,
+        panel_index=panel_index_for("clock", display_order=app_config.display_order),
         frames=frames,
         frame_duration_ms=CLOCK_FRAME_DURATION_MS,
         name="Clock",
@@ -265,7 +262,7 @@ def send_weather(
 
     _send_widget_frames(
         client=client,
-        panel_index=WEATHER_PANEL_INDEX,
+        panel_index=panel_index_for("weather", display_order=app_config.display_order),
         frames=frames,
         frame_duration_ms=_weather_frame_duration_ms(weather.condition),
         name="Weather",
@@ -296,7 +293,7 @@ def send_mail(
 
     _send_widget_frames(
         client=client,
-        panel_index=MAIL_PANEL_INDEX,
+        panel_index=panel_index_for("mail", display_order=app_config.display_order),
         frames=(frame,),
         frame_duration_ms=None,
         name="Mail",
@@ -324,7 +321,7 @@ def send_teams(
 
     _send_widget_frames(
         client=client,
-        panel_index=TEAMS_PANEL_INDEX,
+        panel_index=panel_index_for("teams", display_order=app_config.display_order),
         frames=(frame,),
         frame_duration_ms=None,
         name="Teams",
@@ -356,7 +353,7 @@ def send_pokemon(
 
     _send_widget_frames(
         client=client,
-        panel_index=POKEMON_GO_PANEL_INDEX,
+        panel_index=panel_index_for("pokemon_go", display_order=app_config.display_order),
         frames=frames,
         frame_duration_ms=POKEMON_GO_FRAME_DURATION_MS,
         name="Pokémon GO",
@@ -393,6 +390,7 @@ def send_dashboard(
         timezone=app_config.timezone,
         locale=app_config.locale,
         temperature_unit=app_config.temperature_unit,
+        display_order=app_config.display_order,
     )
 
     clock_frames = render_clock_animation(datetime.now(app_config.timezone))
@@ -408,25 +406,30 @@ def send_dashboard(
         artwork_by_url=raid_artwork,
     )
 
-    panel_frames: dict[
-        int,
+    animated_frames_by_widget: dict[
+        str,
         tuple[
             tuple[Image.Image, ...],
             int | None,
         ],
     ] = {
-        CLOCK_PANEL_INDEX: (
+        "clock": (
             clock_frames,
             CLOCK_FRAME_DURATION_MS,
         ),
-        WEATHER_PANEL_INDEX: (
+        "weather": (
             weather_frames,
             _weather_frame_duration_ms(weather.condition),
         ),
-        POKEMON_GO_PANEL_INDEX: (
+        "pokemon_go": (
             pokemon_frames,
             POKEMON_GO_FRAME_DURATION_MS,
         ),
+    }
+
+    panel_frames = {
+        panel_index_for(widget_name, display_order=app_config.display_order): value
+        for widget_name, value in animated_frames_by_widget.items()
     }
 
     failed_displays: list[int] = []

@@ -11,6 +11,7 @@ from novachrono.dashboard import (
     POKEMON_GO_PANEL_INDEX,
     TEAMS_PANEL_INDEX,
     WEATHER_PANEL_INDEX,
+    panel_index_for,
     render_dashboard,
     render_panel,
 )
@@ -374,4 +375,64 @@ def test_teams_changes_only_teams_panel(
     assert (
         active_dashboard[POKEMON_GO_PANEL_INDEX].tobytes()
         == no_activity_dashboard[POKEMON_GO_PANEL_INDEX].tobytes()
+    )
+
+
+def test_panel_index_for_uses_default_order() -> None:
+    assert panel_index_for("mail") == MAIL_PANEL_INDEX
+    assert panel_index_for("weather") == WEATHER_PANEL_INDEX
+    assert panel_index_for("clock") == CLOCK_PANEL_INDEX
+    assert panel_index_for("pokemon_go") == POKEMON_GO_PANEL_INDEX
+    assert panel_index_for("teams") == TEAMS_PANEL_INDEX
+
+
+def test_panel_index_for_uses_custom_order() -> None:
+    custom_order = (
+        "teams",
+        "pokemon_go",
+        "clock",
+        "weather",
+        "mail",
+    )
+
+    assert panel_index_for("teams", display_order=custom_order) == 0
+    assert panel_index_for("mail", display_order=custom_order) == 4
+
+
+def test_render_dashboard_respects_custom_display_order(
+    mail: MailSummary,
+    weather: CurrentWeather,
+    raid_roster: RaidRoster,
+    teams: TeamsSummary,
+) -> None:
+    custom_order = (
+        "teams",
+        "pokemon_go",
+        "clock",
+        "weather",
+        "mail",
+    )
+
+    default_order_dashboard = render_dashboard(
+        FIXED_TIME,
+        mail=mail,
+        weather=weather,
+        raid_roster=raid_roster,
+        teams=teams,
+    )
+
+    custom_order_dashboard = render_dashboard(
+        FIXED_TIME,
+        mail=mail,
+        weather=weather,
+        raid_roster=raid_roster,
+        teams=teams,
+        display_order=custom_order,
+    )
+
+    assert (
+        custom_order_dashboard[0].tobytes() == default_order_dashboard[TEAMS_PANEL_INDEX].tobytes()
+    )
+    assert (
+        custom_order_dashboard[4].tobytes() == default_order_dashboard[MAIL_PANEL_INDEX].tobytes()
     )

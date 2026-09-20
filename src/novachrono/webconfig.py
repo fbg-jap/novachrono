@@ -2,18 +2,24 @@
 
 import html
 import webbrowser
+from base64 import b64encode
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from io import BytesIO
 from pathlib import Path
 from typing import Final
 from urllib.parse import parse_qs
 
 from dotenv import dotenv_values, set_key
+from PIL import Image
 
 from novachrono.config import (
+    DEFAULT_DISPLAY_ORDER,
     DEFAULT_ENV_FILENAME,
     DEFAULT_MAIL_MAILBOX,
     DEFAULT_MAIL_PORT,
+    DISPLAY_ORDER_VARIABLE,
     LOCALE_VARIABLE,
     MAIL_HOST_VARIABLE,
     MAIL_MAILBOX_VARIABLE,
@@ -33,6 +39,7 @@ from novachrono.config import (
     WEATHER_LONGITUDE_VARIABLE,
     ConfigError,
     parse_temperature_unit,
+    validate_display_order,
     validate_locale,
     validate_mail_settings,
     validate_teams_settings,
@@ -40,11 +47,53 @@ from novachrono.config import (
     validate_weather_settings,
 )
 from novachrono.i18n import SUPPORTED_LOCALES
+from novachrono.mail import MailSummary
+from novachrono.pokemon_go import RaidBoss, RaidRoster
+from novachrono.teams import TeamsSummary
+from novachrono.weather import CurrentWeather, WeatherCondition
+from novachrono.widgets.clock import render_clock_panel
+from novachrono.widgets.mail import render_mail_panel
+from novachrono.widgets.pokemon_go import render_raid_panel
+from novachrono.widgets.teams import render_teams_panel
+from novachrono.widgets.weather import render_weather_panel
 
 DEFAULT_CONFIG_SERVER_HOST: Final = "127.0.0.1"
 DEFAULT_CONFIG_SERVER_PORT: Final = 8765
 
 _TEMPERATURE_UNITS: Final = ("C", "F")
+
+_WIDGET_LABELS: Final = {
+    "mail": "Mail",
+    "weather": "Weather",
+    "clock": "Clock",
+    "pokemon_go": "Pokémon GO",
+    "teams": "Teams",
+}
+
+_SAMPLE_MAIL: Final = MailSummary(
+    unread_count=3,
+    latest_sender="Alex Doe",
+    latest_subject="Example subject line",
+)
+
+_SAMPLE_WEATHER: Final = CurrentWeather(
+    condition=WeatherCondition.PARTLY_CLOUDY,
+    temperature=21,
+    high_temperature=24,
+    low_temperature=14,
+    precipitation_probability=20,
+    is_day=True,
+)
+
+_SAMPLE_RAID_ROSTER: Final = RaidRoster(
+    five_star=(RaidBoss(name="Zacian", can_be_shiny=True),),
+    mega=(RaidBoss(name="Mega Gengar", can_be_shiny=True),),
+)
+
+_SAMPLE_TEAMS: Final = TeamsSummary(
+    latest_sender="Sam",
+    latest_message_preview="Example channel message preview",
+)
 
 
 @dataclass(frozen=True)
@@ -93,6 +142,119 @@ _FIELDS: Final[tuple[_Field, ...]] = (
     _Field(TEAMS_TEAM_ID_VARIABLE, "Teams team ID"),
     _Field(TEAMS_CHANNEL_ID_VARIABLE, "Teams channel ID"),
 )
+
+
+def _render_sample_panel(widget_name: str) -> Image.Image:
+    """Render a widget with fixed sample data, for GUI preview purposes only."""
+
+    if widget_name == "mail":
+        return render_mail_panel(_SAMPLE_MAIL)
+
+    if widget_name == "weather":
+        return render_weather_panel(_SAMPLE_WEATHER)
+
+    if widget_name == "clock":
+        return render_clock_panel(datetime.now(UTC))
+
+    if widget_name == "pokemon_go":
+        return render_raid_panel(_SAMPLE_RAID_ROSTER)
+
+    if widget_name == "teams":
+        return render_teams_panel(_SAMPLE_TEAMS)
+
+    raise ValueError(f"Unknown widget: {widget_name}")
+
+
+def _panel_data_uri(image: Image.Image) -> str:
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    encoded = b64encode(buffer.getvalue()).decode("ascii")
+
+    return f"data:image/png;base64,{encoded}"
+
+
+def _render_arrangement(values: dict[str, str | None]) -> str:
+    current_order = _read_display_order(values)
+
+    try:
+        validate_display_order(current_order)
+    except ConfigError:
+        current_order = DEFAULT_DISPLAY_ORDER
+
+    cards = "\n".join(
+        _render_arrangement_card(widget_name, position=index + 1)
+        for index, widget_name in enumerate(current_order)
+    )
+
+    escaped_order = html.escape(",".join(current_order))
+
+    hidden_field = (
+        f'<input type="hidden" name="{DISPLAY_ORDER_VARIABLE}" '
+        f'id="display-order-field" value="{escaped_order}">'
+    )
+
+    return f"""<div class="arrangement" id="arrangement">
+{cards}
+</div>
+{hidden_field}
+<script>
+(function () {{
+  var container = document.getElementById('arrangement');
+  var field = document.getElementById('display-order-field');
+  if (!container || !field) return;
+
+  var dragged = null;
+
+  container.addEventListener('dragstart', function (event) {{
+    var card = event.target.closest('.arrange-card');
+    if (!card) return;
+    dragged = card;
+    card.classList.add('dragging');
+    event.dataTransfer.effectAllowed = 'move';
+  }});
+
+  container.addEventListener('dragend', function (event) {{
+    var card = event.target.closest('.arrange-card');
+    if (card) card.classList.remove('dragging');
+    updateOrder();
+  }});
+
+  container.addEventListener('dragover', function (event) {{
+    event.preventDefault();
+    if (!dragged) return;
+    var target = event.target.closest('.arrange-card');
+    if (!target || target === dragged) return;
+    var rect = target.getBoundingClientRect();
+    var before = (event.clientX - rect.left) < rect.width / 2;
+    container.insertBefore(dragged, before ? target : target.nextSibling);
+  }});
+
+  function updateOrder() {{
+    var cards = Array.prototype.slice.call(container.querySelectorAll('.arrange-card'));
+    field.value = cards.map(function (card) {{ return card.dataset.widget; }}).join(',');
+    cards.forEach(function (card, index) {{
+      var label = card.querySelector('.display-number');
+      if (label) {{ label.textContent = String(index + 1); }}
+    }});
+  }}
+
+  updateOrder();
+}})();
+</script>
+"""
+
+
+def _render_arrangement_card(widget_name: str, *, position: int) -> str:
+    label = _WIDGET_LABELS.get(widget_name, widget_name)
+    data_uri = _panel_data_uri(_render_sample_panel(widget_name))
+    escaped_widget_name = html.escape(widget_name)
+    escaped_label = html.escape(label)
+
+    return f"""<div class="arrange-card" draggable="true" data-widget="{escaped_widget_name}">
+  <div class="arrange-card-label">Display <span class="display-number">{position}</span></div>
+  <img src="{data_uri}" alt="{escaped_label} widget preview">
+  <div class="arrange-card-name">{escaped_label}</div>
+</div>"""
 
 
 def run_config_server(
@@ -234,6 +396,11 @@ def _validate_submission(values: dict[str, str | None]) -> tuple[str, ...]:
     except ConfigError as error:
         errors.append(str(error))
 
+    try:
+        validate_display_order(_read_display_order(values))
+    except ConfigError as error:
+        errors.append(str(error))
+
     return tuple(errors)
 
 
@@ -245,6 +412,22 @@ def _write_submission(env_file: Path, values: dict[str, str | None]) -> None:
             _clean(values.get(field.variable)) or "",
             quote_mode="never",
         )
+
+    set_key(
+        env_file,
+        DISPLAY_ORDER_VARIABLE,
+        ",".join(_read_display_order(values)),
+        quote_mode="never",
+    )
+
+
+def _read_display_order(values: dict[str, str | None]) -> tuple[str, ...]:
+    raw = _clean(values.get(DISPLAY_ORDER_VARIABLE))
+
+    if raw is None:
+        return DEFAULT_DISPLAY_ORDER
+
+    return tuple(part.strip() for part in raw.split(",") if part.strip())
 
 
 def _parse_optional_float(value: str | None, variable: str) -> tuple[float | None, str | None]:
@@ -282,6 +465,7 @@ def _render_page(
     saved: bool,
 ) -> str:
     fields_html = "\n".join(_render_field(field, values) for field in _FIELDS)
+    arrangement_html = _render_arrangement(values)
 
     banner_html = ""
     if saved:
@@ -296,13 +480,36 @@ def _render_page(
 <meta charset="utf-8">
 <title>Novachrono Configuration</title>
 <style>
-  body {{ font-family: sans-serif; max-width: 40rem; margin: 2rem auto; padding: 0 1rem; }}
+  body {{ font-family: sans-serif; max-width: 52rem; margin: 2rem auto; padding: 0 1rem; }}
   label {{ display: block; margin-top: 1rem; font-weight: bold; }}
   input, select {{ width: 100%; padding: 0.4rem; box-sizing: border-box; }}
   .help {{ font-weight: normal; font-size: 0.85rem; color: #555; }}
   .banner-error {{ background: #fdecea; border: 1px solid #f5c6cb; padding: 0.75rem 1rem; }}
   .banner-success {{ background: #e6f4ea; border: 1px solid #b7dfb9; padding: 0.5rem 1rem; }}
   button {{ margin-top: 1.5rem; padding: 0.5rem 1.5rem; }}
+  h2 {{ margin-top: 2.5rem; }}
+  .arrangement {{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    padding: 0;
+    margin: 1rem 0;
+    list-style: none;
+  }}
+  .arrange-card {{
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    padding: 0.5rem;
+    width: 130px;
+    text-align: center;
+    background: #fafafa;
+    cursor: grab;
+    user-select: none;
+  }}
+  .arrange-card.dragging {{ opacity: 0.4; }}
+  .arrange-card-label {{ font-size: 0.75rem; color: #555; margin-bottom: 0.25rem; }}
+  .arrange-card img {{ width: 110px; height: 110px; display: block; margin: 0 auto; }}
+  .arrange-card-name {{ margin-top: 0.25rem; font-weight: bold; }}
 </style>
 </head>
 <body>
@@ -310,6 +517,10 @@ def _render_page(
 <p>Changes are written to the local <code>.env</code> file.</p>
 {banner_html}
 <form method="post">
+<h2>Display Arrangement</h2>
+<p>Drag the cards to change which physical display each widget appears on.
+Thumbnails use sample data, not live values.</p>
+{arrangement_html}
 {fields_html}
 <button type="submit">Save</button>
 </form>

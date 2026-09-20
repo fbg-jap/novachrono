@@ -1,5 +1,5 @@
 import os
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
@@ -37,6 +37,18 @@ TEAMS_CLIENT_ID_VARIABLE: Final = "NOVACHRONO_TEAMS_CLIENT_ID"
 TEAMS_CLIENT_SECRET_VARIABLE: Final = "NOVACHRONO_TEAMS_CLIENT_SECRET"
 TEAMS_TEAM_ID_VARIABLE: Final = "NOVACHRONO_TEAMS_TEAM_ID"
 TEAMS_CHANNEL_ID_VARIABLE: Final = "NOVACHRONO_TEAMS_CHANNEL_ID"
+
+DISPLAY_ORDER_VARIABLE: Final = "NOVACHRONO_DISPLAY_ORDER"
+
+WIDGET_NAMES: Final = (
+    "mail",
+    "weather",
+    "clock",
+    "pokemon_go",
+    "teams",
+)
+
+DEFAULT_DISPLAY_ORDER: Final = WIDGET_NAMES
 
 _TEMPERATURE_UNIT_ALIASES: Final = {
     "C": TemperatureUnit.CELSIUS,
@@ -99,6 +111,7 @@ class AppConfig:
     times_gate: TimesGateSettings
     mail: MailSettings
     teams: TeamsSettings
+    display_order: tuple[str, ...]
 
 
 def load_config(env_file: Path | None = None) -> AppConfig:
@@ -134,6 +147,8 @@ def load_config(env_file: Path | None = None) -> AppConfig:
 
     teams = _read_teams_settings(values)
 
+    display_order = _read_display_order(values)
+
     return AppConfig(
         timezone=timezone,
         locale=locale,
@@ -142,6 +157,7 @@ def load_config(env_file: Path | None = None) -> AppConfig:
         times_gate=times_gate,
         mail=mail,
         teams=teams,
+        display_order=display_order,
     )
 
 
@@ -259,6 +275,32 @@ def validate_teams_settings(
         team_id=team_id,
         channel_id=channel_id,
     )
+
+
+def _read_display_order(values: Mapping[str, str | None]) -> tuple[str, ...]:
+    raw = _read_optional_value(values, DISPLAY_ORDER_VARIABLE)
+
+    if raw is None:
+        return DEFAULT_DISPLAY_ORDER
+
+    order = tuple(part.strip() for part in raw.split(",") if part.strip())
+
+    return validate_display_order(order)
+
+
+def validate_display_order(order: Sequence[str]) -> tuple[str, ...]:
+    """Validate a display order and return it as a normalized tuple.
+
+    A valid order contains each widget name in ``WIDGET_NAMES`` exactly once.
+    """
+
+    normalized = tuple(order)
+
+    if sorted(normalized) != sorted(WIDGET_NAMES):
+        joined_names = ", ".join(WIDGET_NAMES)
+        raise ConfigError(f"Display order must contain each of {joined_names} exactly once")
+
+    return normalized
 
 
 def validate_timezone(name: str) -> ZoneInfo:
