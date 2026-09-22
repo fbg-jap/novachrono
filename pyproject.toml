@@ -20,7 +20,7 @@ dependencies = [
     "pillow==12.3.0",
     "python-dotenv==1.2.3",
     "typer==0.27.2",
-    "tzdata==2026.3",
+    "tzdata==2026.4",
 ]
 
 [project.urls]
