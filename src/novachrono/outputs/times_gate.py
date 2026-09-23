@@ -1,9 +1,11 @@
-import base64
+import hashlib
 import io
 import json
-import time
+import socket
+import threading
 from collections.abc import Sequence
 from dataclasses import dataclass
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any, Final
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -12,9 +14,10 @@ from PIL import Image
 
 from novachrono.design import PANEL_COUNT, PANEL_SIZE
 
-DEFAULT_API_PORT: Final = 9000
-DEFAULT_API_PATH: Final = "/divoom_api"
+DEFAULT_API_PORT: Final = 80
+DEFAULT_API_PATH: Final = "/post"
 DEFAULT_TIMEOUT_SECONDS: Final = 8.0
+DEFAULT_FETCH_TIMEOUT_SECONDS: Final = 20.0
 
 LOCAL_API_SCHEME: Final = "http"
 
@@ -30,6 +33,7 @@ class TimesGateConfig:
     host: str
     local_token: str
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
+    fetch_timeout_seconds: float = DEFAULT_FETCH_TIMEOUT_SECONDS
 
     def __post_init__(self) -> None:
         normalized_host = self.host.strip()
@@ -49,6 +53,9 @@ class TimesGateConfig:
 
         if self.timeout_seconds <= 0:
             raise ValueError("Times Gate timeout must be greater than zero")
+
+        if self.fetch_timeout_seconds <= 0:
+            raise ValueError("Times Gate fetch timeout must be greater than zero")
 
         object.__setattr__(
             self,
@@ -73,14 +80,20 @@ class TimesGateConfig:
 
 
 class TimesGateClient:
-    """Communicate with a Divoom Times Gate over the local network."""
+    """Communicate with a Divoom Times Gate over the local network.
+
+    The Times Gate firmware accepts pushed image data (`Draw/SendHttpGif`) but
+    does not actually draw it; it only shows a picture it downloads itself via
+    `Device/PlayGif`. Every send therefore runs a short-lived local HTTP server
+    that serves one GIF and waits for the device to fetch it, rather than
+    pushing pixels directly.
+    """
 
     def __init__(
         self,
         config: TimesGateConfig,
     ) -> None:
         self._config = config
-        self._next_picture_id = int(time.time())
 
     @property
     def config(
@@ -107,24 +120,15 @@ class TimesGateClient:
         panel_index: int,
         image: Image.Image,
     ) -> dict[str, Any]:
-        """Send one static image to one Times Gate display."""
+        """Show one static image on one Times Gate display."""
 
         _validate_panel_index(panel_index)
         _validate_image_size(image)
 
-        payload = {
-            "Command": "Draw/SendHttpGif",
-            "LocalToken": self._config.local_token,
-            "LcdArray": _create_lcd_array(panel_index),
-            "PicNum": 1,
-            "PicWidth": PANEL_SIZE,
-            "PicOffset": 0,
-            "PicID": self._new_picture_id(),
-            "PicSpeed": 1000,
-            "PicData": encode_image(image),
-        }
-
-        return self._post(payload)
+        return self._play(
+            panel_index,
+            encode_gif((image,)),
+        )
 
     def send_animation(
         self,
@@ -132,8 +136,8 @@ class TimesGateClient:
         images: Sequence[Image.Image],
         *,
         frame_duration_ms: int,
-    ) -> tuple[dict[str, Any], ...]:
-        """Send a native multi-frame animation to one Times Gate display."""
+    ) -> dict[str, Any]:
+        """Show a native multi-frame animation on one Times Gate display."""
 
         _validate_panel_index(panel_index)
 
@@ -142,40 +146,67 @@ class TimesGateClient:
             frame_duration_ms=frame_duration_ms,
         )
 
-        lcd_array = _create_lcd_array(panel_index)
-        picture_id = self._new_picture_id()
+        return self._play(
+            panel_index,
+            encode_gif(
+                images,
+                frame_duration_ms=frame_duration_ms,
+            ),
+        )
 
-        responses: list[dict[str, Any]] = []
+    def _play(
+        self,
+        panel_index: int,
+        gif_bytes: bytes,
+    ) -> dict[str, Any]:
+        device_address = self._resolve_device_address()
 
-        for frame_index, image in enumerate(images):
-            payload = {
-                "Command": "Draw/SendHttpGif",
-                "LocalToken": self._config.local_token,
-                "LcdArray": lcd_array,
-                "PicNum": len(images),
-                "PicWidth": PANEL_SIZE,
-                "PicOffset": frame_index,
-                "PicID": picture_id,
-                "PicSpeed": frame_duration_ms,
-                "PicData": encode_image(image),
-            }
+        with _FrameServer(
+            gif_bytes,
+            allowed_client=device_address,
+        ) as server:
+            local_host = self._local_address(device_address)
+            url = f"http://{local_host}:{server.port}{server.path}"
 
+            response = self._post(
+                {
+                    "Command": "Device/PlayGif",
+                    "LocalToken": self._config.local_token,
+                    "LcdArray": _create_lcd_array(panel_index),
+                    "FileName": [url],
+                }
+            )
+
+            if not server.wait_for_fetch(self._config.fetch_timeout_seconds):
+                raise TimesGateError(f"Times Gate did not fetch the frame from {url} in time")
+
+        return response
+
+    def _resolve_device_address(
+        self,
+    ) -> str:
+        try:
+            return socket.gethostbyname(self._config.host)
+        except OSError as error:
+            raise TimesGateError(
+                f"Could not resolve Times Gate host {self._config.host!r}: {error}"
+            ) from error
+
+    def _local_address(
+        self,
+        device_address: str,
+    ) -> str:
+        """Return the local address the Times Gate can reach us at."""
+
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
             try:
-                responses.append(self._post(payload))
-            except TimesGateError as error:
+                probe.connect((device_address, DEFAULT_API_PORT))
+            except OSError as error:
                 raise TimesGateError(
-                    f"Could not send animation frame {frame_index + 1}/{len(images)}: {error}"
+                    f"Could not determine a local address reachable from {device_address}: {error}"
                 ) from error
 
-        return tuple(responses)
-
-    def _new_picture_id(
-        self,
-    ) -> int:
-        picture_id = self._next_picture_id
-        self._next_picture_id += 1
-
-        return picture_id
+            return probe.getsockname()[0]
 
     def _post(
         self,
@@ -227,20 +258,144 @@ class TimesGateClient:
         return response_data
 
 
-def encode_image(
-    image: Image.Image,
-) -> str:
-    """Encode a Pillow image as a Base64 JPEG."""
+class _FrameServer:
+    """A short-lived local HTTP server that serves exactly one frame.
+
+    The Times Gate downloads a frame by URL in a separate request after
+    `Device/PlayGif` returns, so the server must stay up until that request
+    arrives (or the wait times out), and it answers only the configured
+    device so a frame meant for one screen cannot be read by another device
+    on the network.
+    """
+
+    def __init__(
+        self,
+        gif_bytes: bytes,
+        *,
+        allowed_client: str,
+    ) -> None:
+        self._path = f"/{_frame_path(gif_bytes)}"
+        self._fetched = threading.Event()
+
+        handler_class = _build_frame_handler(
+            path=self._path,
+            body=gif_bytes,
+            allowed_client=allowed_client,
+            fetched=self._fetched,
+        )
+        self._httpd = HTTPServer(("0.0.0.0", 0), handler_class)  # nosec B104 - device must reach this server
+        self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
+
+    @property
+    def port(
+        self,
+    ) -> int:
+        """The port the frame is served on."""
+
+        return self._httpd.server_address[1]
+
+    @property
+    def path(
+        self,
+    ) -> str:
+        """The path the frame is served at."""
+
+        return self._path
+
+    def __enter__(
+        self,
+    ) -> _FrameServer:
+        self._thread.start()
+        return self
+
+    def __exit__(
+        self,
+        *exc_info: object,
+    ) -> None:
+        self._httpd.shutdown()
+        self._httpd.server_close()
+        self._thread.join(timeout=2)
+
+    def wait_for_fetch(
+        self,
+        timeout_seconds: float,
+    ) -> bool:
+        """Wait until the device has fetched the frame."""
+
+        return self._fetched.wait(timeout_seconds)
+
+
+def _build_frame_handler(
+    *,
+    path: str,
+    body: bytes,
+    allowed_client: str,
+    fetched: threading.Event,
+) -> type[BaseHTTPRequestHandler]:
+    class _FrameRequestHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            if self.client_address[0] != allowed_client or self.path != path:
+                self.send_response(404)
+                self.end_headers()
+                return
+
+            self.send_response(200)
+            self.send_header("Content-Type", "image/gif")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+            fetched.set()
+
+        def log_message(
+            self,
+            format: str,
+            *args: object,
+        ) -> None:
+            # The device polling this server is not worth logging.
+            pass
+
+    return _FrameRequestHandler
+
+
+def encode_gif(
+    images: Sequence[Image.Image],
+    *,
+    frame_duration_ms: int | None = None,
+) -> bytes:
+    """Encode one or more Pillow images as a GIF the Times Gate can display."""
 
     buffer = io.BytesIO()
 
-    image.convert("RGB").save(
-        buffer,
-        format="JPEG",
-        quality=90,
-    )
+    first_frame, *remaining_frames = (image.convert("RGB") for image in images)
 
-    return base64.b64encode(buffer.getvalue()).decode("ascii")
+    if remaining_frames:
+        first_frame.save(
+            buffer,
+            format="GIF",
+            save_all=True,
+            append_images=remaining_frames,
+            duration=frame_duration_ms,
+            loop=0,
+        )
+    else:
+        first_frame.save(
+            buffer,
+            format="GIF",
+        )
+
+    return buffer.getvalue()
+
+
+def _frame_path(
+    gif_bytes: bytes,
+) -> str:
+    # The hash is part of the file name so an unchanged frame keeps its link
+    # and a changed one is never mistaken for the previous frame.
+    digest = hashlib.sha256(gif_bytes).hexdigest()[:16]
+
+    return f"frame-{digest}.gif"
 
 
 def _create_lcd_array(

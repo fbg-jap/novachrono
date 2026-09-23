@@ -1,8 +1,10 @@
-import base64
 import io
 import json
+import threading
+from collections.abc import Callable
 from unittest.mock import MagicMock, patch
 from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 import pytest
 from PIL import Image
@@ -12,12 +14,13 @@ from novachrono.outputs.times_gate import (
     TimesGateClient,
     TimesGateConfig,
     TimesGateError,
-    encode_image,
+    _FrameServer,
+    encode_gif,
 )
 
-HOST = "192.168.178.50"
+HOST = "127.0.0.1"
 TOKEN = "secret"
-API_URL = "http://192.168.178.50:9000/divoom_api"
+API_URL = "http://127.0.0.1:80/post"
 
 
 def _create_panel(
@@ -30,11 +33,14 @@ def _create_panel(
     )
 
 
-def _create_client() -> TimesGateClient:
+def _create_client(
+    fetch_timeout_seconds: float = 2.0,
+) -> TimesGateClient:
     return TimesGateClient(
         TimesGateConfig(
             host=HOST,
             local_token=TOKEN,
+            fetch_timeout_seconds=fetch_timeout_seconds,
         )
     )
 
@@ -62,6 +68,33 @@ def _create_bytes_response(
     context_manager.__exit__.return_value = False
 
     return context_manager
+
+
+def _respond_and_fetch_frame(
+    success_payload: object,
+) -> Callable[[Request, float], MagicMock]:
+    """Answer the command instantly, then fetch the served frame in the background.
+
+    Mirrors how a real Times Gate behaves: `Device/PlayGif` returns right
+    away while the picture is downloaded in a separate request.
+    """
+
+    def side_effect(
+        request: Request,
+        timeout: float,
+    ) -> MagicMock:
+        payload = json.loads(request.data.decode("utf-8"))
+        url = payload["FileName"][0]
+
+        threading.Thread(
+            target=urlopen,
+            args=(url,),
+            daemon=True,
+        ).start()
+
+        return _create_response(success_payload)
+
+    return side_effect
 
 
 def test_config_creates_expected_api_url() -> None:
@@ -130,17 +163,40 @@ def test_config_rejects_invalid_timeout() -> None:
         )
 
 
-def test_encode_image_returns_base64_jpeg() -> None:
-    encoded_image = encode_image(_create_panel())
-
-    decoded_image = base64.b64decode(encoded_image)
-
-    with Image.open(io.BytesIO(decoded_image)) as image:
-        assert image.format == "JPEG"
-        assert image.size == (
-            PANEL_SIZE,
-            PANEL_SIZE,
+def test_config_rejects_invalid_fetch_timeout() -> None:
+    with pytest.raises(
+        ValueError,
+        match="fetch timeout must be greater than zero",
+    ):
+        TimesGateConfig(
+            host=HOST,
+            local_token=TOKEN,
+            fetch_timeout_seconds=0,
         )
+
+
+def test_encode_gif_returns_single_frame_gif() -> None:
+    gif_bytes = encode_gif((_create_panel(),))
+
+    with Image.open(io.BytesIO(gif_bytes)) as image:
+        assert image.format == "GIF"
+        assert image.size == (PANEL_SIZE, PANEL_SIZE)
+        assert getattr(image, "n_frames", 1) == 1
+
+
+def test_encode_gif_returns_multi_frame_gif() -> None:
+    gif_bytes = encode_gif(
+        (
+            _create_panel("#FF0000"),
+            _create_panel("#00FF00"),
+            _create_panel("#0000FF"),
+        ),
+        frame_duration_ms=5_000,
+    )
+
+    with Image.open(io.BytesIO(gif_bytes)) as image:
+        assert image.format == "GIF"
+        assert image.n_frames == 3
 
 
 @pytest.mark.parametrize(
@@ -287,56 +343,35 @@ def test_get_configuration_sends_expected_request(
 
 
 @patch("novachrono.outputs.times_gate.urlopen")
-def test_send_image_targets_selected_panel(
+def test_send_image_asks_the_device_to_play_a_gif_it_downloads_itself(
     mocked_urlopen: MagicMock,
 ) -> None:
-    mocked_urlopen.return_value = _create_response(
-        {
-            "Command": "Draw/SendHttpGif",
-            "ReturnCode": 0,
-            "ReturnMessage": "",
-        }
-    )
+    mocked_urlopen.side_effect = _respond_and_fetch_frame({"ReturnCode": 0})
 
-    _create_client().send_image(
+    response = _create_client().send_image(
         panel_index=2,
         image=_create_panel(),
     )
 
+    assert response["ReturnCode"] == 0
+
     request = mocked_urlopen.call_args.args[0]
     payload = json.loads(request.data.decode("utf-8"))
 
-    assert payload["Command"] == "Draw/SendHttpGif"
-    assert payload["LcdArray"] == [
-        0,
-        0,
-        1,
-        0,
-        0,
-    ]
-    assert payload["PicNum"] == 1
-    assert payload["PicWidth"] == PANEL_SIZE
-    assert payload["PicOffset"] == 0
-    assert payload["PicSpeed"] == 1000
-    assert isinstance(
-        payload["PicData"],
-        str,
-    )
+    assert payload["Command"] == "Device/PlayGif"
+    assert payload["LocalToken"] == TOKEN
+    assert payload["LcdArray"] == [0, 0, 1, 0, 0]
+    assert len(payload["FileName"]) == 1
+    assert payload["FileName"][0].endswith(".gif")
 
 
 @patch("novachrono.outputs.times_gate.urlopen")
-def test_send_animation_sends_native_multi_frame_payload(
+def test_send_animation_serves_one_multi_frame_gif(
     mocked_urlopen: MagicMock,
 ) -> None:
-    mocked_urlopen.return_value = _create_response(
-        {
-            "Command": "Draw/SendHttpGif",
-            "ReturnCode": 0,
-            "ReturnMessage": "",
-        }
-    )
+    mocked_urlopen.side_effect = _respond_and_fetch_frame({"ReturnCode": 0})
 
-    responses = _create_client().send_animation(
+    response = _create_client().send_animation(
         panel_index=3,
         images=(
             _create_panel("#FF0000"),
@@ -346,90 +381,75 @@ def test_send_animation_sends_native_multi_frame_payload(
         frame_duration_ms=10_000,
     )
 
-    assert len(responses) == 3
-    assert mocked_urlopen.call_count == 3
+    assert response["ReturnCode"] == 0
+    assert mocked_urlopen.call_count == 1
 
-    payloads = [
-        json.loads(call.args[0].data.decode("utf-8")) for call in mocked_urlopen.call_args_list
-    ]
+    request = mocked_urlopen.call_args.args[0]
+    payload = json.loads(request.data.decode("utf-8"))
 
-    picture_ids = {payload["PicID"] for payload in payloads}
-
-    assert len(picture_ids) == 1
-
-    for frame_index, payload in enumerate(payloads):
-        assert payload["Command"] == "Draw/SendHttpGif"
-        assert payload["LcdArray"] == [
-            0,
-            0,
-            0,
-            1,
-            0,
-        ]
-        assert payload["PicNum"] == 3
-        assert payload["PicWidth"] == PANEL_SIZE
-        assert payload["PicOffset"] == frame_index
-        assert payload["PicSpeed"] == 10_000
-        assert isinstance(
-            payload["PicData"],
-            str,
-        )
+    assert payload["Command"] == "Device/PlayGif"
+    assert payload["LcdArray"] == [0, 0, 0, 1, 0]
 
 
 @patch("novachrono.outputs.times_gate.urlopen")
-def test_send_animation_uses_different_picture_data_per_frame(
+def test_send_image_raises_when_device_never_fetches_the_frame(
     mocked_urlopen: MagicMock,
 ) -> None:
-    mocked_urlopen.return_value = _create_response(
-        {
-            "ReturnCode": 0,
-        }
-    )
+    mocked_urlopen.return_value = _create_response({"ReturnCode": 0})
 
-    _create_client().send_animation(
-        panel_index=0,
-        images=(
-            _create_panel("#FF0000"),
-            _create_panel("#0000FF"),
-        ),
-        frame_duration_ms=5_000,
-    )
-
-    payloads = [
-        json.loads(call.args[0].data.decode("utf-8")) for call in mocked_urlopen.call_args_list
-    ]
-
-    assert payloads[0]["PicData"] != payloads[1]["PicData"]
-
-
-@patch("novachrono.outputs.times_gate.urlopen")
-def test_send_animation_reports_failed_frame(
-    mocked_urlopen: MagicMock,
-) -> None:
-    mocked_urlopen.side_effect = [
-        _create_response(
-            {
-                "ReturnCode": 0,
-            }
-        ),
-        URLError("Connection refused"),
-    ]
+    client = _create_client(fetch_timeout_seconds=0.05)
 
     with pytest.raises(
         TimesGateError,
-        match="animation frame 2/3",
+        match="did not fetch the frame",
     ):
-        _create_client().send_animation(
-            panel_index=2,
-            images=(
-                _create_panel("#FF0000"),
-                _create_panel("#00FF00"),
-                _create_panel("#0000FF"),
-            ),
-            frame_duration_ms=5_000,
+        client.send_image(
+            panel_index=0,
+            image=_create_panel(),
         )
 
-    assert mocked_urlopen.call_count == 2
+
+@patch("novachrono.outputs.times_gate.urlopen")
+def test_send_image_raises_when_the_command_fails(
+    mocked_urlopen: MagicMock,
+) -> None:
+    mocked_urlopen.side_effect = URLError("Connection refused")
+
+    with pytest.raises(
+        TimesGateError,
+        match="Could not reach Times Gate",
+    ):
+        _create_client().send_image(
+            panel_index=0,
+            image=_create_panel(),
+        )
+
+
+def test_frame_server_serves_the_frame_only_to_the_allowed_client() -> None:
+    gif_bytes = encode_gif((_create_panel(),))
+
+    with _FrameServer(gif_bytes, allowed_client="203.0.113.1") as server:
+        url = f"http://127.0.0.1:{server.port}{server.path}"
+
+        with pytest.raises(HTTPError) as excinfo:
+            urlopen(url, timeout=2)
+
+        assert excinfo.value.code == 404
+        assert not server.wait_for_fetch(0.05)
+
+
+def test_frame_server_serves_the_frame_to_the_allowed_client() -> None:
+    gif_bytes = encode_gif((_create_panel(),))
+
+    with _FrameServer(gif_bytes, allowed_client="127.0.0.1") as server:
+        url = f"http://127.0.0.1:{server.port}{server.path}"
+
+        with urlopen(url, timeout=2) as response:
+            assert response.status == 200
+            assert response.headers["Content-Type"] == "image/gif"
+            assert response.read() == gif_bytes
+
+        assert server.wait_for_fetch(2)
 
 
 @patch("novachrono.outputs.times_gate.urlopen")

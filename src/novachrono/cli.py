@@ -486,7 +486,7 @@ def _send_widget_frames(
     typer.echo(f"Sending {name.lower()} to display {display_number} ...")
 
     try:
-        responses = _deliver_frames(
+        response = _deliver_frames(
             client=client,
             panel_index=panel_index,
             frames=frames,
@@ -497,12 +497,9 @@ def _send_widget_frames(
 
     typer.echo(f"{name} sent successfully with {len(frames)} frame(s).")
 
-    response_output: object
-    response_output = responses[0] if len(responses) == 1 else responses
-
     typer.echo(
         json.dumps(
-            response_output,
+            response,
             indent=2,
             ensure_ascii=False,
         )
@@ -515,14 +512,12 @@ def _deliver_frames(
     panel_index: int,
     frames: tuple[Image.Image, ...],
     frame_duration_ms: int | None,
-) -> tuple[dict[str, Any], ...]:
+) -> dict[str, Any]:
     if len(frames) == 1:
-        response = client.send_image(
+        return client.send_image(
             panel_index=panel_index,
             image=frames[0],
         )
-
-        return (response,)
 
     if frame_duration_ms is None:
         raise ValueError("Animated panel requires a frame duration")
