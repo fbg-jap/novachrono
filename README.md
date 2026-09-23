@@ -394,15 +394,22 @@ The Times Gate adapter:
 - communicates through the local Times Gate HTTP API
 - validates panel indices
 - validates image dimensions
-- encodes panel images as Base64 JPEG data
-- sends static images to individual displays
-- sends native multi-frame animations
-- uses one Times Gate picture ID across the frames of an animation
+- encodes one or more panel images as a GIF
+- serves that GIF from a short-lived local HTTP server and asks the device to
+  play it, waiting for confirmation that the device actually fetched it
+- sends static images and native multi-frame animations the same way
 - translates network and device errors into application-specific exceptions
 
 Animations are executed by the Times Gate itself.
 
 Novachrono does not keep a Python process in a sleep/update loop to simulate animation.
+
+The Times Gate firmware accepts a pushed image (`Draw/SendHttpGif`) but does not
+actually draw it; it only shows a picture it downloads itself via
+`Device/PlayGif`. Each send therefore runs a local HTTP server just long enough
+for the device to fetch the frame, then shuts it down — it does not keep
+serving the frame afterward, so a Times Gate that reboots while a delivered
+frame is still on screen will need that command re-sent.
 
 ### Command-Line Interface
 
@@ -658,14 +665,14 @@ Do not include:
 ```text
 http://
 https://
-:9000
-/divoom_api
+:80
+/post
 ```
 
 The local API currently uses:
 
 ```text
-http://<host>:9000/divoom_api
+http://<host>:80/post
 ```
 
 ### Times Gate Token

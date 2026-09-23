@@ -312,7 +312,7 @@ def test_send_clock_uses_native_animation_without_external_data(
     )
 
     mocked_client = mocked_client_class.return_value
-    mocked_client.send_animation.return_value = tuple({"ReturnCode": 0} for _ in range(26))
+    mocked_client.send_animation.return_value = {"ReturnCode": 0}
 
     result = runner.invoke(
         app,
@@ -428,9 +428,7 @@ def test_send_weather_uses_animation_for_animated_conditions(
     mocked_load_weather.return_value = animated_weather
 
     mocked_client = mocked_client_class.return_value
-    mocked_client.send_animation.return_value = tuple(
-        {"ReturnCode": 0} for _ in range(expected_frame_count)
-    )
+    mocked_client.send_animation.return_value = {"ReturnCode": 0}
 
     result = runner.invoke(
         app,
@@ -792,10 +790,7 @@ def test_send_pokemon_uses_animation_for_multiple_bosses(
     mocked_fetch_artwork.return_value = {}
 
     mocked_client = mocked_client_class.return_value
-    mocked_client.send_animation.return_value = (
-        {"ReturnCode": 0},
-        {"ReturnCode": 0},
-    )
+    mocked_client.send_animation.return_value = {"ReturnCode": 0}
 
     result = runner.invoke(
         app,
